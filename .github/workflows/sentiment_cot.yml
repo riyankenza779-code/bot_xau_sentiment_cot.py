@@ -1,0 +1,27 @@
+name: XAUUSD Retail Sentiment + COT Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *"
+    - cron: "0 13 * * *"
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install openai requests
+
+      - name: Run bot
+        run: python bot_xau_sentiment_cot.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
