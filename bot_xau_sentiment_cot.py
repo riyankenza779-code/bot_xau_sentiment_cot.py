@@ -2,6 +2,7 @@ from openai import OpenAI
 import os
 import requests
 import re
+import json
 from datetime import datetime
 
 # =========================
@@ -11,6 +12,8 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+STATE_FILE = "sentiment_state.json"
+
 # =========================
 # SESSION
 # =========================
@@ -18,7 +21,7 @@ hour_utc = datetime.utcnow().hour
 session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
 
 # =========================
-# RETAIL SENTIMENT (MYFXBOOK)
+# RETAIL SENTIMENT
 # =========================
 def get_retail_sentiment():
     try:
@@ -45,23 +48,33 @@ def get_retail_sentiment():
         return None
 
 # =========================
-# SCORING SYSTEM (LEVEL 2)
+# LOAD / SAVE STATE (LEVEL 3)
+# =========================
+def load_previous_state():
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def save_state(buy, sell):
+    with open(STATE_FILE, "w") as f:
+        json.dump({"buy": buy, "sell": sell}, f)
+
+# =========================
+# SCORING (LEVEL 2)
 # =========================
 def calculate_score(buy, sell):
-    score = 50  # base neutral
+    score = 50
 
-    # Retail contra logic
-    if buy >= 75:
-        score -= 15
-    elif sell >= 75:
+    if buy >= 75 or sell >= 75:
         score -= 15
     else:
         score += 10
 
-    # Smart money bias (COT static for now)
-    score += 15  # hedge fund net long bias
-
-    # Clamp score
+    score += 15  # COT bullish bias
     score = max(0, min(100, score))
 
     if score >= 70:
@@ -74,15 +87,28 @@ def calculate_score(buy, sell):
     return score, label
 
 # =========================
+# DELTA SENTIMENT (LEVEL 3)
+# =========================
+def get_delta_text(current, previous):
+    if not previous:
+        return "Belum ada data pembanding (run pertama)."
+
+    delta = current - previous
+
+    if abs(delta) >= 10:
+        return f"⚠️ Perubahan agresif: {previous}% → {current}% ({delta:+d}%)"
+    elif abs(delta) >= 5:
+        return f"Perubahan moderat: {previous}% → {current}% ({delta:+d}%)"
+    else:
+        return f"Perubahan kecil: {previous}% → {current}% ({delta:+d}%)"
+
+# =========================
 # GPT ANALYSIS
 # =========================
-def get_analysis(retail, score, label):
+def get_analysis(retail, delta_text, score, label):
     if retail:
         buy, sell = retail
-        alert = ""
-        if buy >= 75 or sell >= 75:
-            alert = " ⚠️ (Crowded Trade)"
-
+        alert = " ⚠️ (Crowded Trade)" if buy >= 75 or sell >= 75 else ""
         retail_text = f"Buy {buy}% vs Sell {sell}%{alert}"
     else:
         retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
@@ -90,19 +116,20 @@ def get_analysis(retail, score, label):
     prompt = f"""
 Kamu adalah analis makro profesional.
 
-TUGAS:
-Buat analisa XAUUSD dengan gaya laporan desk riset.
-
 DATA:
 - Retail Sentiment: {retail_text}
+- Delta Retail: {delta_text}
 - Market Score: {score}/100 ({label})
 - COT: Hedge fund masih net long emas (bias bullish namun melambat)
 
+TUGAS:
+Buat analisa XAUUSD yang menekankan perubahan SENTIMENT, bukan hanya levelnya.
+
 ATURAN:
-- Fokus market context
 - Bahasa Indonesia
-- Ringkas, tegas, profesional
-- Tanpa rekomendasi entry
+- Fokus market context
+- Ringkas, tegas
+- Tanpa entry
 
 FORMAT:
 📊 XAUUSD Market Insight ({session})
@@ -112,6 +139,9 @@ FORMAT:
 
 🔹 Retail Sentiment:
 {retail_text}
+
+🔹 Perubahan Sentiment:
+{delta_text}
 
 🔹 COT (Smart Money):
 ...
@@ -144,12 +174,19 @@ def send_telegram(text):
 # =========================
 if __name__ == "__main__":
     retail = get_retail_sentiment()
+    prev = load_previous_state()
 
     if retail:
         buy, sell = retail
         score, label = calculate_score(buy, sell)
+
+        prev_buy = prev["buy"] if prev else None
+        delta_text = get_delta_text(buy, prev_buy)
+
+        save_state(buy, sell)
     else:
         score, label = 50, "Netral (Data Terbatas)"
+        delta_text = "Delta tidak tersedia karena data retail gagal diambil."
 
-    analysis = get_analysis(retail, score, label)
+    analysis = get_analysis(retail, delta_text, score, label)
     send_telegram(analysis)
