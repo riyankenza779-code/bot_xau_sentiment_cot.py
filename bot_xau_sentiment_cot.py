@@ -15,7 +15,7 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 # SESSION
 # =========================
 hour_utc = datetime.utcnow().hour
-session = "PAGI (Asia Session)" if hour_utc < 7 else "MALAM (US Session)"
+session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
 
 # =========================
 # RETAIL SENTIMENT (MYFXBOOK)
@@ -25,7 +25,6 @@ def get_retail_sentiment():
         url = "https://www.myfxbook.com/community/outlook/XAUUSD"
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, headers=headers, timeout=15)
-
         if r.status_code != 200:
             return None
 
@@ -38,7 +37,6 @@ def get_retail_sentiment():
 
         buy = int(buy.group(1))
         sell = int(sell.group(1))
-
         if buy + sell != 100:
             return None
 
@@ -47,49 +45,64 @@ def get_retail_sentiment():
         return None
 
 # =========================
-# COT DATA (SMART MONEY)
+# SCORING SYSTEM (LEVEL 2)
 # =========================
-def get_cot_bias():
-    """
-    Menggunakan interpretasi AI berbasis data COT terakhir (weekly).
-    Kita tidak scrape mentah CSV di tahap ini,
-    tapi meminta AI membaca konteks COT emas terbaru secara makro.
-    """
-    return """
-COT (Smart Money):
-- Hedge fund (Non-Commercial) masih berada dalam posisi NET LONG emas.
-- Namun laju akumulasi mulai melambat dibanding minggu sebelumnya.
-- Ini mengindikasikan bias bullish masih ada, tapi tidak agresif.
-"""
+def calculate_score(buy, sell):
+    score = 50  # base neutral
+
+    # Retail contra logic
+    if buy >= 75:
+        score -= 15
+    elif sell >= 75:
+        score -= 15
+    else:
+        score += 10
+
+    # Smart money bias (COT static for now)
+    score += 15  # hedge fund net long bias
+
+    # Clamp score
+    score = max(0, min(100, score))
+
+    if score >= 70:
+        label = "Bullish Bias (Cautious)"
+    elif score >= 50:
+        label = "Netral"
+    else:
+        label = "Bearish Bias"
+
+    return score, label
 
 # =========================
-# GPT ANALYSIS (FUNDAMENTAL + RETAIL + COT)
+# GPT ANALYSIS
 # =========================
-def get_analysis(retail, cot_text):
+def get_analysis(retail, score, label):
     if retail:
         buy, sell = retail
-        retail_text = f"Retail Sentiment: Buy {buy}% vs Sell {sell}%"
+        alert = ""
+        if buy >= 75 or sell >= 75:
+            alert = " ⚠️ (Crowded Trade)"
+
+        retail_text = f"Buy {buy}% vs Sell {sell}%{alert}"
     else:
-        retail_text = "Retail Sentiment: ❌ Tidak tersedia (Myfxbook tidak dapat diakses)"
+        retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
 
     prompt = f"""
 Kamu adalah analis makro profesional.
 
-{retail_text}
-
-{cot_text}
-
 TUGAS:
-Buat analisa XAUUSD dengan menggabungkan:
-1. Fundamental makro (Fed, inflasi, risk-on/off, geopolitik)
-2. Retail sentiment (crowded trade / kontra indikasi)
-3. COT institusional (smart money bias)
+Buat analisa XAUUSD dengan gaya laporan desk riset.
+
+DATA:
+- Retail Sentiment: {retail_text}
+- Market Score: {score}/100 ({label})
+- COT: Hedge fund masih net long emas (bias bullish namun melambat)
 
 ATURAN:
-- Jika data retail tidak tersedia, sebutkan keterbatasan
-- Fokus MARKET CONTEXT, bukan entry
+- Fokus market context
 - Bahasa Indonesia
-- Ringkas, objektif, profesional
+- Ringkas, tegas, profesional
+- Tanpa rekomendasi entry
 
 FORMAT:
 📊 XAUUSD Market Insight ({session})
@@ -98,10 +111,13 @@ FORMAT:
 ...
 
 🔹 Retail Sentiment:
-...
+{retail_text}
 
 🔹 COT (Smart Money):
 ...
+
+📊 Market Score:
+{score}/100 — {label}
 
 🔹 AI Conclusion:
 ...
@@ -121,13 +137,19 @@ def send_telegram(text):
     requests.post(url, json={
         "chat_id": CHAT_ID,
         "text": text
-    })
+    }, timeout=20)
 
 # =========================
 # MAIN
 # =========================
 if __name__ == "__main__":
     retail = get_retail_sentiment()
-    cot_text = get_cot_bias()
-    analysis = get_analysis(retail, cot_text)
+
+    if retail:
+        buy, sell = retail
+        score, label = calculate_score(buy, sell)
+    else:
+        score, label = 50, "Netral (Data Terbatas)"
+
+    analysis = get_analysis(retail, score, label)
     send_telegram(analysis)
