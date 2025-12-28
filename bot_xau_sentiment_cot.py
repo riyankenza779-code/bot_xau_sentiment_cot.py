@@ -18,7 +18,7 @@ hour_utc = datetime.utcnow().hour
 session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
 
 # =========================
-# RETAIL SENTIMENT (MYFXBOOK)
+# RETAIL SENTIMENT
 # =========================
 def get_retail_sentiment():
     try:
@@ -44,7 +44,7 @@ def get_retail_sentiment():
         return None
 
 # =========================
-# LEVEL 2 — SCORING
+# SCORING
 # =========================
 def calculate_score(buy, sell):
     score = 50
@@ -52,7 +52,7 @@ def calculate_score(buy, sell):
         score -= 15
     else:
         score += 10
-    score += 15  # COT bias (net long, cautious)
+    score += 15  # COT bias
     score = max(0, min(100, score))
 
     if score >= 70:
@@ -64,63 +64,88 @@ def calculate_score(buy, sell):
     return score, label
 
 # =========================
-# LEVEL 4 & 5 — AI-BASED MODE
+# LEVEL 4–5: AI MARKET & EVENT MODE
 # =========================
 def get_ai_market_and_event_mode():
     prompt = """
-Tentukan kondisi pasar emas (XAUUSD) HARI INI secara profesional.
+Tentukan kondisi pasar emas (XAUUSD) HARI INI.
 
-KELUARAN WAJIB:
-1) Market Mode: Trending / Ranging / Volatile / Event-driven
-2) Event Context: Pre-Event / Event Day / Post-Event / Normal Day
+Output:
+Market Mode: Trending / Ranging / Volatile / Event-driven
+Event Context: Pre-Event / Event Day / Post-Event / Normal Day
 
-PERTIMBANGAN:
-- Fed & suku bunga
-- Inflasi AS (CPI/PCE)
-- Data tenaga kerja (NFP)
-- Geopolitik
-- Apakah mendekati / hari-H / pasca FOMC
+Pertimbangkan Fed, inflasi, NFP, geopolitik, FOMC.
 
-FORMAT JAWABAN (PERSIS):
-Market Mode: <isi>
-Event Context: <isi>
+Format:
+Market Mode: ...
+Event Context: ...
 """
-    resp = client.responses.create(
+    r = client.responses.create(
         model="gpt-4.1-mini",
         input=prompt
     )
-    return resp.output_text.strip()
+    return r.output_text.strip()
 
 # =========================
-# GPT ANALYSIS (LEVEL 1–5)
+# LEVEL 8: EXTREME ALERT
 # =========================
-def get_analysis(retail, score, label, ai_modes):
+def get_extreme_alert(retail, score):
+    alerts = []
+
     if retail:
         buy, sell = retail
-        alert = " ⚠️ (Crowded Trade)" if buy >= 75 or sell >= 75 else ""
-        retail_text = f"Buy {buy}% vs Sell {sell}%{alert}"
+        if buy >= 80:
+            alerts.append("Retail Buy ≥ 80% → Extreme Crowded Long")
+        if sell >= 80:
+            alerts.append("Retail Sell ≥ 80% → Extreme Crowded Short")
+
+    if score >= 80:
+        alerts.append("Market Score ≥ 80 → Overheated Bullish")
+    if score <= 20:
+        alerts.append("Market Score ≤ 20 → Capitulation Risk")
+
+    if not alerts:
+        return ""
+
+    alert_text = "🚨 EXTREME MARKET ALERT\n"
+    for a in alerts:
+        alert_text += f"- {a}\n"
+    alert_text += "→ Risiko pergerakan ekstrem & false move meningkat\n"
+
+    return alert_text
+
+# =========================
+# GPT ANALYSIS
+# =========================
+def get_analysis(retail, score, label, ai_modes, extreme_alert):
+    if retail:
+        buy, sell = retail
+        retail_text = f"Buy {buy}% vs Sell {sell}%"
     else:
         retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
 
     prompt = f"""
-Kamu adalah analis makro profesional (desk riset).
+Kamu adalah analis makro profesional.
 
 {ai_modes}
 
-DATA TAMBAHAN:
+{extreme_alert}
+
+DATA:
 - Retail Sentiment: {retail_text}
 - Market Score: {score}/100 ({label})
-- COT: Hedge fund masih net long emas, namun momentum melambat.
+- COT: Hedge fund masih net long emas (momentum melambat)
 
 TUGAS:
-Buat laporan XAUUSD ringkas, kontekstual, dan tegas.
-Sesuaikan bahasa dengan Market Mode & Event Context.
+Buat laporan XAUUSD profesional dan kontekstual.
 
 FORMAT:
 📊 XAUUSD Market Insight ({session})
 
 🧠 Market Mode & Event:
 {ai_modes}
+
+{extreme_alert}
 
 🔹 Fundamental:
 ...
@@ -137,22 +162,18 @@ FORMAT:
 🔹 AI Conclusion:
 ...
 """
-    resp = client.responses.create(
+    r = client.responses.create(
         model="gpt-4.1-mini",
         input=prompt
     )
-    return resp.output_text
+    return r.output_text
 
 # =========================
 # TELEGRAM
 # =========================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(
-        url,
-        json={"chat_id": CHAT_ID, "text": text},
-        timeout=20
-    )
+    requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=20)
 
 # =========================
 # MAIN
@@ -166,5 +187,6 @@ if __name__ == "__main__":
         score, label = 50, "Netral (Data Terbatas)"
 
     ai_modes = get_ai_market_and_event_mode()
-    analysis = get_analysis(retail, score, label, ai_modes)
+    extreme_alert = get_extreme_alert(retail, score)
+    analysis = get_analysis(retail, score, label, ai_modes, extreme_alert)
     send_telegram(analysis)
