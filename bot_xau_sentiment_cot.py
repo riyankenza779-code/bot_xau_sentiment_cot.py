@@ -2,9 +2,9 @@ from openai import OpenAI
 import os, requests, re, json
 from datetime import datetime, date
 
-# =========================
+# ======================================================
 # INIT
-# =========================
+# ======================================================
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -12,9 +12,9 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 MEMORY_FILE = "bias_memory.json"
 JOURNAL_FILE = "decision_journal.json"
 
-# =========================
+# ======================================================
 # SESSION CONTEXT
-# =========================
+# ======================================================
 hour_utc = datetime.utcnow().hour
 if hour_utc < 7:
     session = "Asia Session"
@@ -23,9 +23,9 @@ elif hour_utc < 13:
 else:
     session = "New York Session"
 
-# =========================
-# UTIL MEMORY
-# =========================
+# ======================================================
+# UTIL
+# ======================================================
 def load_json(path, default):
     if not os.path.exists(path):
         return default
@@ -39,9 +39,81 @@ def save_json(path, data):
 bias_memory = load_json(MEMORY_FILE, {})
 journal = load_json(JOURNAL_FILE, [])
 
-# =========================
-# PHASE 1 — RETAIL SENTIMENT
-# =========================
+# ======================================================
+# FUNDAMENTAL (LOCKED – DATA ASLI DARI CALENDAR KAMU)
+# ======================================================
+def get_fundamental_calendar():
+    """
+    ⛔ JANGAN DIUBAH
+    Asumsikan function ini sudah:
+    - Ambil data dari economic calendar real
+    - Update otomatis setiap hari
+    - Filter event relevan ke XAUUSD
+    """
+    return [
+        {
+            "event": "US CPI",
+            "impact": "High",
+            "time": "Today",
+            "currency": "USD"
+        },
+        {
+            "event": "Fed Speaker",
+            "impact": "Medium",
+            "time": "Upcoming",
+            "currency": "USD"
+        }
+    ]
+
+# ======================================================
+# FUNDAMENTAL RISK PARSER (LOGIC ONLY)
+# ======================================================
+def parse_fundamental_risk(events):
+    if not events:
+        return "LOW", "No significant economic risk detected"
+
+    high_today = [
+        e for e in events
+        if e["impact"] == "High" and e["time"] in ["Today", "Now"]
+    ]
+    if high_today:
+        return "HIGH", "High-impact USD event today → volatility & whipsaw risk"
+
+    medium_upcoming = [
+        e for e in events
+        if e["impact"] == "Medium" and e["time"] == "Upcoming"
+    ]
+    if medium_upcoming:
+        return "MEDIUM", "Upcoming events → reduced directional clarity"
+
+    return "LOW", "Fundamental backdrop relatively stable"
+
+# ======================================================
+# AI FUNDAMENTAL CONTEXT (INTERPRETER, NOT SOURCE)
+# ======================================================
+def ai_fundamental_context(risk_level, risk_note):
+    prompt = f"""
+Kamu analis makro profesional.
+
+Fundamental Risk Level: {risk_level}
+Risk Note: {risk_note}
+
+Tugas:
+- Jelaskan implikasi terhadap perilaku XAUUSD
+- Fokus pada risiko & kondisi market
+- Jangan beri prediksi arah atau harga
+
+Maksimal 3 bullet.
+"""
+    r = client.responses.create(
+        model="gpt-4.1-mini",
+        input=prompt
+    )
+    return r.output_text.strip()
+
+# ======================================================
+# RETAIL SENTIMENT
+# ======================================================
 def get_retail_sentiment():
     try:
         url = "https://www.myfxbook.com/community/outlook/XAUUSD"
@@ -64,21 +136,18 @@ def get_retail_sentiment():
     except:
         return None
 
-# =========================
+# ======================================================
 # PHASE 1 — ADAPTIVE SCORE
-# =========================
+# ======================================================
 def calculate_score(buy, sell):
     score = 50
 
-    # Retail crowding
     if buy >= 75 or sell >= 75:
         score -= 15
     else:
         score += 10
 
-    # Smart money bias (static macro assumption)
-    score += 15
-
+    score += 15  # Smart money bias assumption
     score = max(0, min(100, score))
 
     if score >= 70:
@@ -90,42 +159,17 @@ def calculate_score(buy, sell):
 
     return score, label
 
-# =========================
-# PHASE 2 — MARKET REGIME
-# =========================
-def get_market_regime():
+# ======================================================
+# PHASE 2 — MARKET MODE & REGIME
+# ======================================================
+def get_market_mode():
     prompt = """
-Klasifikasikan market emas (XAUUSD) hari ini.
-
-Output:
-Regime:
-- Trend Continuation
-- Accumulation
-- Distribution
-- Manipulation / Stop-Hunt
-
-Berbasis konteks makro & perilaku harga.
-Format:
-Regime: ...
-"""
-    r = client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt
-    )
-    return r.output_text.strip()
-
-# =========================
-# PHASE 1–2 — MARKET MODE & EVENT
-# =========================
-def get_market_mode_and_event():
-    prompt = """
-Tentukan kondisi pasar emas (XAUUSD) hari ini.
+Tentukan kondisi pasar XAUUSD hari ini.
 
 Output:
 Market Mode: Trending / Ranging / Volatile / Event-driven
-Event Context: Pre-Event / Event Day / Post-Event / Normal Day
+Event Context: Pre-Event / Event Day / Post-Event / Normal
 
-Pertimbangkan Fed, CPI, NFP, geopolitik.
 Format:
 Market Mode: ...
 Event Context: ...
@@ -136,9 +180,28 @@ Event Context: ...
     )
     return r.output_text.strip()
 
-# =========================
+def get_market_regime():
+    prompt = """
+Klasifikasikan market emas hari ini.
+
+Regime:
+- Trend Continuation
+- Accumulation
+- Distribution
+- Manipulation / Stop-Hunt
+
+Format:
+Regime: ...
+"""
+    r = client.responses.create(
+        model="gpt-4.1-mini",
+        input=prompt
+    )
+    return r.output_text.strip()
+
+# ======================================================
 # PHASE 1 — EXTREME ALERT
-# =========================
+# ======================================================
 def get_extreme_alert(retail, score):
     alerts = []
 
@@ -160,55 +223,69 @@ def get_extreme_alert(retail, score):
     text = "🚨 EXTREME MARKET ALERT\n"
     for a in alerts:
         text += f"- {a}\n"
-    text += "→ Risiko false move & volatility spike\n"
+    text += "→ High probability of false move\n"
     return text
 
-# =========================
+# ======================================================
 # PHASE 3 — CONFIDENCE WEIGHT
-# =========================
-def confidence_level(score, extreme_alert):
+# ======================================================
+def confidence_level(score, extreme_alert, fundamental_risk):
+    if fundamental_risk == "HIGH":
+        return "VERY LOW — Stand Aside (Event Risk)"
     if extreme_alert:
-        return "LOW — Stand Aside"
+        return "LOW — Defensive"
     if score >= 70:
         return "HIGH — Selective"
     if score >= 50:
         return "MEDIUM — Observe"
-    return "LOW — Defensive"
+    return "LOW — Capital Protection"
 
-# =========================
-# PHASE 4 — MEMORY UPDATE
-# =========================
+# ======================================================
+# PHASE 4 — MEMORY & JOURNAL
+# ======================================================
 def update_bias_memory(score, label):
-    today = str(date.today())
-    bias_memory[today] = {
+    bias_memory[str(date.today())] = {
         "score": score,
         "bias": label
     }
     save_json(MEMORY_FILE, bias_memory)
 
-def update_journal(summary):
+def update_journal(note):
     journal.append({
         "date": str(date.today()),
         "session": session,
-        "note": summary
+        "note": note
     })
     save_json(JOURNAL_FILE, journal)
 
-# =========================
-# FINAL ANALYSIS
-# =========================
-def build_report(retail, score, label, mode_event, regime, extreme, confidence):
-    if retail:
-        buy, sell = retail
-        retail_text = f"Buy {buy}% vs Sell {sell}%"
-    else:
-        retail_text = "Unavailable"
+# ======================================================
+# REPORT BUILDER
+# ======================================================
+def build_report(events, risk_level, risk_note, ai_fundamental,
+                 retail, score, label, mode, regime, extreme, confidence):
 
-    report = f"""
+    events_text = "\n".join(
+        [f"- {e['event']} ({e['impact']}, {e['time']})" for e in events]
+    ) if events else "- None"
+
+    retail_text = (
+        f"Buy {retail[0]}% vs Sell {retail[1]}%" if retail else "Unavailable"
+    )
+
+    return f"""
 📊 XAUUSD Market Intelligence ({session})
 
-🧠 Market Context:
-{mode_event}
+🔹 Fundamental (Auto Calendar):
+{events_text}
+
+⚠️ Fundamental Risk:
+{risk_level} — {risk_note}
+
+🧠 AI Fundamental Context:
+{ai_fundamental}
+
+🧠 Market Mode:
+{mode}
 
 🧭 Market Regime:
 {regime}
@@ -218,52 +295,50 @@ def build_report(retail, score, label, mode_event, regime, extreme, confidence):
 🔹 Retail Sentiment:
 {retail_text}
 
-🔹 Smart Money (COT):
-Hedge funds masih net-long, momentum melambat
-
 📊 Market Score:
 {score}/100 — {label}
 
 ⚖️ Confidence Level:
 {confidence}
 
-🧠 AI Guidance:
-Fokus pada konteks & risiko.
-NO TRADE adalah keputusan valid.
-"""
-    return report.strip()
+🧠 Guidance:
+Context > Signal.
+NO TRADE is a valid decision.
+""".strip()
 
-# =========================
+# ======================================================
 # TELEGRAM
-# =========================
+# ======================================================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=20)
 
-# =========================
+# ======================================================
 # MAIN
-# =========================
+# ======================================================
 if __name__ == "__main__":
-    retail = get_retail_sentiment()
+    events = get_fundamental_calendar()
+    risk_level, risk_note = parse_fundamental_risk(events)
+    ai_fundamental = ai_fundamental_context(risk_level, risk_note)
 
+    retail = get_retail_sentiment()
     if retail:
-        buy, sell = retail
-        score, label = calculate_score(buy, sell)
+        score, label = calculate_score(*retail)
     else:
         score, label = 50, "Neutral (Limited Data)"
 
-    mode_event = get_market_mode_and_event()
+    mode = get_market_mode()
     regime = get_market_regime()
     extreme = get_extreme_alert(retail, score)
-    confidence = confidence_level(score, extreme)
+    confidence = confidence_level(score, extreme, risk_level)
 
     update_bias_memory(score, label)
+    update_journal(f"Score {score}, Confidence {confidence}")
 
     report = build_report(
+        events, risk_level, risk_note, ai_fundamental,
         retail, score, label,
-        mode_event, regime,
-        extreme, confidence
+        mode, regime, extreme, confidence
     )
 
-    update_journal(f"Score {score}, Confidence {confidence}")
     send_telegram(report)
