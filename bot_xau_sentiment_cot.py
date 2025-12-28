@@ -2,7 +2,6 @@ from openai import OpenAI
 import os
 import requests
 import re
-import json
 from datetime import datetime
 
 # =========================
@@ -12,8 +11,6 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-STATE_FILE = "sentiment_state.json"
-
 # =========================
 # SESSION
 # =========================
@@ -21,7 +18,7 @@ hour_utc = datetime.utcnow().hour
 session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
 
 # =========================
-# RETAIL SENTIMENT
+# RETAIL SENTIMENT (MYFXBOOK)
 # =========================
 def get_retail_sentiment():
     try:
@@ -34,7 +31,6 @@ def get_retail_sentiment():
         html = r.text
         buy = re.search(r'Buy\s*<span[^>]*>(\d+)%', html)
         sell = re.search(r'Sell\s*<span[^>]*>(\d+)%', html)
-
         if not buy or not sell:
             return None
 
@@ -48,33 +44,15 @@ def get_retail_sentiment():
         return None
 
 # =========================
-# LOAD / SAVE STATE (LEVEL 3)
-# =========================
-def load_previous_state():
-    if not os.path.exists(STATE_FILE):
-        return None
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-def save_state(buy, sell):
-    with open(STATE_FILE, "w") as f:
-        json.dump({"buy": buy, "sell": sell}, f)
-
-# =========================
-# SCORING (LEVEL 2)
+# LEVEL 2 — SCORING
 # =========================
 def calculate_score(buy, sell):
     score = 50
-
     if buy >= 75 or sell >= 75:
         score -= 15
     else:
         score += 10
-
-    score += 15  # COT bullish bias
+    score += 15  # COT bias (net long, cautious)
     score = max(0, min(100, score))
 
     if score >= 70:
@@ -83,29 +61,40 @@ def calculate_score(buy, sell):
         label = "Netral"
     else:
         label = "Bearish Bias"
-
     return score, label
 
 # =========================
-# DELTA SENTIMENT (LEVEL 3)
+# LEVEL 4 & 5 — AI-BASED MODE
 # =========================
-def get_delta_text(current, previous):
-    if not previous:
-        return "Belum ada data pembanding (run pertama)."
+def get_ai_market_and_event_mode():
+    prompt = """
+Tentukan kondisi pasar emas (XAUUSD) HARI INI secara profesional.
 
-    delta = current - previous
+KELUARAN WAJIB:
+1) Market Mode: Trending / Ranging / Volatile / Event-driven
+2) Event Context: Pre-Event / Event Day / Post-Event / Normal Day
 
-    if abs(delta) >= 10:
-        return f"⚠️ Perubahan agresif: {previous}% → {current}% ({delta:+d}%)"
-    elif abs(delta) >= 5:
-        return f"Perubahan moderat: {previous}% → {current}% ({delta:+d}%)"
-    else:
-        return f"Perubahan kecil: {previous}% → {current}% ({delta:+d}%)"
+PERTIMBANGAN:
+- Fed & suku bunga
+- Inflasi AS (CPI/PCE)
+- Data tenaga kerja (NFP)
+- Geopolitik
+- Apakah mendekati / hari-H / pasca FOMC
+
+FORMAT JAWABAN (PERSIS):
+Market Mode: <isi>
+Event Context: <isi>
+"""
+    resp = client.responses.create(
+        model="gpt-4.1-mini",
+        input=prompt
+    )
+    return resp.output_text.strip()
 
 # =========================
-# GPT ANALYSIS
+# GPT ANALYSIS (LEVEL 1–5)
 # =========================
-def get_analysis(retail, delta_text, score, label):
+def get_analysis(retail, score, label, ai_modes):
     if retail:
         buy, sell = retail
         alert = " ⚠️ (Crowded Trade)" if buy >= 75 or sell >= 75 else ""
@@ -114,34 +103,30 @@ def get_analysis(retail, delta_text, score, label):
         retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
 
     prompt = f"""
-Kamu adalah analis makro profesional.
+Kamu adalah analis makro profesional (desk riset).
 
-DATA:
+{ai_modes}
+
+DATA TAMBAHAN:
 - Retail Sentiment: {retail_text}
-- Delta Retail: {delta_text}
 - Market Score: {score}/100 ({label})
-- COT: Hedge fund masih net long emas (bias bullish namun melambat)
+- COT: Hedge fund masih net long emas, namun momentum melambat.
 
 TUGAS:
-Buat analisa XAUUSD yang menekankan perubahan SENTIMENT, bukan hanya levelnya.
-
-ATURAN:
-- Bahasa Indonesia
-- Fokus market context
-- Ringkas, tegas
-- Tanpa entry
+Buat laporan XAUUSD ringkas, kontekstual, dan tegas.
+Sesuaikan bahasa dengan Market Mode & Event Context.
 
 FORMAT:
 📊 XAUUSD Market Insight ({session})
+
+🧠 Market Mode & Event:
+{ai_modes}
 
 🔹 Fundamental:
 ...
 
 🔹 Retail Sentiment:
 {retail_text}
-
-🔹 Perubahan Sentiment:
-{delta_text}
 
 🔹 COT (Smart Money):
 ...
@@ -152,41 +137,34 @@ FORMAT:
 🔹 AI Conclusion:
 ...
 """
-
-    response = client.responses.create(
+    resp = client.responses.create(
         model="gpt-4.1-mini",
         input=prompt
     )
-    return response.output_text
+    return resp.output_text
 
 # =========================
 # TELEGRAM
 # =========================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={
-        "chat_id": CHAT_ID,
-        "text": text
-    }, timeout=20)
+    requests.post(
+        url,
+        json={"chat_id": CHAT_ID, "text": text},
+        timeout=20
+    )
 
 # =========================
 # MAIN
 # =========================
 if __name__ == "__main__":
     retail = get_retail_sentiment()
-    prev = load_previous_state()
-
     if retail:
         buy, sell = retail
         score, label = calculate_score(buy, sell)
-
-        prev_buy = prev["buy"] if prev else None
-        delta_text = get_delta_text(buy, prev_buy)
-
-        save_state(buy, sell)
     else:
         score, label = 50, "Netral (Data Terbatas)"
-        delta_text = "Delta tidak tersedia karena data retail gagal diambil."
 
-    analysis = get_analysis(retail, delta_text, score, label)
+    ai_modes = get_ai_market_and_event_mode()
+    analysis = get_analysis(retail, score, label, ai_modes)
     send_telegram(analysis)
