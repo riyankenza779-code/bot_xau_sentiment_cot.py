@@ -5,32 +5,6 @@ import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import threading
-name: XAUUSD Guardian
-
-on: [push]
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run bot
-        run: |
-          python xauusd_guardian_tv_allinone.py
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 # ======================================================
 # CONFIG — VIA ENVIRONMENT VARIABLE (AMAN)
@@ -72,11 +46,7 @@ def get_session():
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(
-            url,
-            json={"chat_id": CHAT_ID, "text": msg},
-            timeout=10
-        )
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
         if r.status_code != 200:
             print("TELEGRAM ERROR:", r.text)
     except Exception as e:
@@ -92,9 +62,10 @@ Tugas:
 - Menentukan arah dominan (bullish / bearish / whipsaw)
 - Menilai risiko lanjutan
 - Berdasarkan pergerakan harga REAL
-- Kasih prediksi harga akurat dengan format presentase dan angka nya juga
-- Kamu harus pintar dan berkembang dalam dunia trading xauusd/gold
-- Update data setiap hari kamu analisa pergerakan nya
+- Kamu harus pintar dalam prediksi xauusd/gold 
+- Kirim laporan setiap 5 menit pergerakan xauusd potensi kemana
+- sebutkan dalam angka dan presentasi nya misal pergerakan gold 20% berish 80% bulish
+- Kamu harus berkembang dan pintar dalam analisa dan kirim data fundamental kamu analisa potensi bulish atau berish
 
 Jawaban singkat, tegas, profesional.
 """
@@ -128,7 +99,6 @@ def post_event_analysis(pre, post):
 def webhook():
     global latest_price, latest_time
     data = request.json
-
     try:
         latest_price = float(data["price"])
         latest_time = data.get("time", "unknown")
@@ -143,7 +113,6 @@ def webhook():
 # ======================================================
 def watchdog():
     global latest_price
-
     last_price = None
     event_state = {}
 
@@ -159,34 +128,26 @@ def watchdog():
             now = datetime.utcnow()
             session = get_session()
 
-            # ===============================
             # PRICE SHOCK
-            # ===============================
             if last_price:
                 change = (price - last_price) / last_price * 100
                 if abs(change) >= PRICE_SHOCK:
                     send_telegram(
-                        f"🚨 PRICE SHOCK\n"
-                        f"Session: {session}\n"
+                        f"🚨 PRICE SHOCK\nSession: {session}\n"
                         f"Change: {change:.2f}%\n"
                         f"{last_price:.2f} → {price:.2f}"
                     )
 
-            # ===============================
             # EVENT LOGIC
-            # ===============================
             for e in get_fundamental_events():
                 h, m = map(int, e["time_utc"].split(":"))
                 event_time = now.replace(hour=h, minute=m, second=0)
                 dt = (event_time - now).total_seconds()
 
-                # PRE EVENT (ONCE)
                 if 0 <= dt <= 1800 and e["event"] not in event_state:
                     send_telegram(
-                        f"⏰ EVENT WARNING\n"
-                        f"{e['event']} ({e['impact']})\n"
-                        f"Harga saat ini: {price:.2f}\n"
-                        f"Tunggu reaksi market."
+                        f"⏰ EVENT WARNING\n{e['event']} ({e['impact']})\n"
+                        f"Harga saat ini: {price:.2f}\nTunggu reaksi market."
                     )
                     event_state[e["event"]] = {
                         "time": event_time,
@@ -194,13 +155,11 @@ def watchdog():
                         "done": False
                     }
 
-                # POST EVENT (ONCE, ≥15 MENIT)
                 if e["event"] in event_state:
                     st = event_state[e["event"]]
                     if not st["done"] and (now - st["time"]).total_seconds() >= 900:
                         send_telegram(
-                            f"🧠 POST EVENT ANALYSIS\n"
-                            f"{e['event']}\n\n"
+                            f"🧠 POST EVENT ANALYSIS\n{e['event']}\n\n"
                             f"{post_event_analysis(st['pre'], price)}"
                         )
                         st["done"] = True
@@ -213,7 +172,7 @@ def watchdog():
             time.sleep(30)
 
 # ======================================================
-# RUN ALL-IN-ONE
+# RUN
 # ======================================================
 if __name__ == "__main__":
     threading.Thread(target=watchdog, daemon=True).start()
