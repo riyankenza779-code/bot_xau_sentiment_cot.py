@@ -1,179 +1,180 @@
-import os
-import time
-import requests
-from datetime import datetime, timedelta
 from openai import OpenAI
+import os
+from datetime import datetime
 
 # ======================================================
-# CONFIG
+# INIT
 # ======================================================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
-
-client = OpenAI(api_key=OPENAI_KEY)
-
-CHECK_INTERVAL = 60        # detik
-DUMP_THRESHOLD = -0.8      # %
-SPIKE_THRESHOLD = 0.8     # %
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ======================================================
-# PRICE SOURCE (WAJIB GANTI KE REAL)
+# SESSION DETECTION
 # ======================================================
-def get_price():
-    """
-    GANTI ke API real:
-    - MT5
-    - TradingView webhook
-    - Metals API
-    """
-    return 4550.0  # dummy
-
-def get_daily_levels():
-    """
-    GANTI ke data real broker
-    """
-    return {
-        "high": 4620,
-        "low": 4480
-    }
+hour_utc = datetime.utcnow().hour
+if hour_utc < 7:
+    session = "Asia"
+elif hour_utc < 13:
+    session = "London"
+else:
+    session = "New York"
 
 # ======================================================
-# FUNDAMENTAL EVENTS (CONTOH)
+# SYSTEM PROMPT (OTAK AI)
 # ======================================================
-def get_today_events():
-    return [
-        {"event": "US CPI", "impact": "High", "time_utc": "13:30"},
-        {"event": "Fed Speaker", "impact": "Medium", "time_utc": "18:00"}
-    ]
+SYSTEM_PROMPT = """
+Kamu adalah AI Market Intelligence khusus XAUUSD.
 
-# ======================================================
-# TELEGRAM
-# ======================================================
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(
-        url,
-        json={"chat_id": CHAT_ID, "text": msg},
-        timeout=10
-    )
-    print("TELEGRAM:", r.status_code)
+PERAN UTAMA:
+- Menganalisa KONTEKS market
+- Membentuk NARASI market
+- Menyusun SKENARIO masa depan
+- Membaca PERILAKU sesi
 
-# ======================================================
-# AI AUTO ANALYSIS
-# ======================================================
-def ai_analysis(price, change):
-    prompt = f"""
-Kamu adalah AI Market Intelligence XAUUSD.
+BATASAN:
+- BUKAN eksekutor order
+- BUKAN sistem alert realtime
+- BUKAN scalping bot
 
-KONDISI:
-Harga saat ini: {price}
-Perubahan cepat: {change:.2f}%
+ATURAN:
+- Gunakan data yang diberikan
+- Jangan mengarang sumber
+- Jangan meminta data ke user
+- Berpikir sebagai analis institusi
 
-TUGAS:
-Jelaskan secara singkat:
-- kemungkinan penyebab pergerakan
-- apakah ini continuation atau fake move
-- risiko lanjutan dalam waktu dekat
-
-Jawab ringkas & tegas.
+GAYA:
+- Tenang
+- Tegas
+- Masuk akal
+- Tidak sensasional
 """
+
+def ai(prompt: str) -> str:
     r = client.responses.create(
         model="gpt-4.1-mini",
-        input=prompt
+        input=SYSTEM_PROMPT + "\n" + prompt
     )
     return r.output_text.strip()
 
 # ======================================================
-# EVENT PROXIMITY CHECK
+# INTELLIGENCE MODULES
 # ======================================================
-def check_event_proximity():
-    now = datetime.utcnow()
-    alerts = []
 
-    for e in get_today_events():
-        h, m = map(int, e["time_utc"].split(":"))
-        event_time = now.replace(hour=h, minute=m, second=0)
+def market_narrative(price, fundamental, retail, bank):
+    """
+    Menjawab: hari ini market sedang apa & siapa dominan
+    """
+    return ai(f"""
+DATA:
+Price: {price}
+Fundamental: {fundamental}
+Retail Sentiment: {retail}
+Institutional Bias: {bank}
+Session: {session}
 
-        if 0 <= (event_time - now).total_seconds() <= 1800:
-            alerts.append(e)
+TUGAS:
+Buat MARKET NARRATIVE XAUUSD hari ini.
 
-    return alerts
+FOKUS:
+- Siapa yang dominan (retail / institusi / event)
+- Karakter pergerakan (tenang, agresif, manipulatif)
+- Risiko utama yang perlu diwaspadai
+""")
 
-# ======================================================
-# WATCHDOG CORE
-# ======================================================
-def watchdog():
-    last_price = None
-    levels = get_daily_levels()
+def scenario_tree(price, narrative, fundamental):
+    """
+    Multi masa depan, bukan satu arah
+    """
+    return ai(f"""
+DATA:
+Price: {price}
+Market Narrative: {narrative}
+Fundamental Context: {fundamental}
 
-    send_telegram("🟢 XAUUSD WATCHDOG AKTIF\nAnti MC Mode: ON 😎")
+TUGAS:
+Susun SCENARIO TREE XAUUSD.
 
-    while True:
-        try:
-            price = get_price()
-            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+FORMAT WAJIB:
+Primary Scenario (dengan probabilitas %):
+Secondary Scenario (dengan probabilitas %):
+Tail Risk Scenario (dengan probabilitas %):
 
-            # ===============================
-            # PRICE CHANGE ALERT
-            # ===============================
-            if last_price:
-                change = (price - last_price) / last_price * 100
+Sebutkan arah dan range harga.
+""")
 
-                if change <= DUMP_THRESHOLD or change >= SPIKE_THRESHOLD:
-                    direction = "DUMP" if change < 0 else "SPIKE"
+def session_behavior(price, narrative):
+    """
+    Perilaku khas sesi berjalan
+    """
+    return ai(f"""
+DATA:
+Session: {session}
+Price Action: {price}
+Market Narrative: {narrative}
 
-                    send_telegram(
-                        f"🚨 XAUUSD {direction} ALERT\n"
-                        f"Time: {now}\n"
-                        f"Change: {change:.2f}%\n"
-                        f"Price: {last_price} → {price}"
-                    )
+TUGAS:
+Analisa PERILAKU SESI {session} untuk XAUUSD.
 
-                    # 🔥 AI AUTO ANALYSIS
-                    analysis = ai_analysis(price, change)
-                    send_telegram(f"🧠 AI QUICK ANALYSIS\n{analysis}")
-
-            # ===============================
-            # LEVEL BREAK ALERT
-            # ===============================
-            if price >= levels["high"]:
-                send_telegram(
-                    f"📈 XAUUSD BREAK HIGH\n"
-                    f"Daily High: {levels['high']}\n"
-                    f"Current: {price}\n"
-                    f"⚠️ Potensi continuation / trap"
-                )
-
-            if price <= levels["low"]:
-                send_telegram(
-                    f"📉 XAUUSD BREAK LOW\n"
-                    f"Daily Low: {levels['low']}\n"
-                    f"Current: {price}\n"
-                    f"⚠️ Stop hunt / panic risk"
-                )
-
-            # ===============================
-            # EVENT PROXIMITY ALERT
-            # ===============================
-            events = check_event_proximity()
-            for e in events:
-                send_telegram(
-                    f"⏰ EVENT WARNING\n"
-                    f"{e['event']} ({e['impact']})\n"
-                    f"Dalam < 30 menit\n"
-                    f"⚠️ Volatilitas XAUUSD meningkat"
-                )
-
-            last_price = price
-            time.sleep(CHECK_INTERVAL)
-
-        except Exception as e:
-            send_telegram(f"❌ WATCHDOG ERROR\n{e}")
-            time.sleep(60)
+FOKUS:
+- Apakah sesi ini cenderung range, continuation, atau reversal
+- Implikasi ke bias intraday
+""")
 
 # ======================================================
-# MAIN
+# PUBLIC INTERFACE
+# ======================================================
+def run_intelligence(price, fundamental, retail, bank):
+    """
+    Fungsi utama yang DIPANGGIL oleh:
+    - watchdog (setelah alert)
+    - report harian
+    - manual trigger
+    """
+    narrative = market_narrative(price, fundamental, retail, bank)
+    scenario = scenario_tree(price, narrative, fundamental)
+    behavior = session_behavior(price, narrative)
+
+    return {
+        "session": session,
+        "market_narrative": narrative,
+        "scenario_tree": scenario,
+        "session_behavior": behavior,
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    }
+
+# ======================================================
+# TEST MODE (OPTIONAL)
 # ======================================================
 if __name__ == "__main__":
-    watchdog()
+    # dummy data untuk test otak
+    price = {
+        "current": 4550,
+        "high": 4620,
+        "low": 4480,
+        "trend": "Higher High / Higher Low",
+        "volatility": "High"
+    }
+
+    fundamental = [
+        {"event": "US CPI", "impact": "High", "time": "Today"},
+        {"event": "Fed Speaker", "impact": "Medium", "time": "Upcoming"}
+    ]
+
+    retail = {
+        "source": "MyFxBook",
+        "buy": 78,
+        "sell": 22
+    }
+
+    bank = {
+        "source": "COT / Bank Notes",
+        "bias": "Bullish medium-term, cautious short-term"
+    }
+
+    intel = run_intelligence(price, fundamental, retail, bank)
+
+    print("=== MARKET NARRATIVE ===")
+    print(intel["market_narrative"])
+    print("\n=== SCENARIO TREE ===")
+    print(intel["scenario_tree"])
+    print("\n=== SESSION BEHAVIOR ===")
+    print(intel["session_behavior"])
