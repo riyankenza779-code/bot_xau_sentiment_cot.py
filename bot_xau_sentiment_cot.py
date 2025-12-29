@@ -1,197 +1,95 @@
-from openai import OpenAI
-import os, requests, re
+import os
+import time
+import requests
 from datetime import datetime
 
 # ======================================================
-# INIT
+# TELEGRAM CONFIG
 # ======================================================
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-
-# ======================================================
-# SESSION DETECTION
-# ======================================================
-hour_utc = datetime.utcnow().hour
-if hour_utc < 7:
-    session = "Asia"
-elif hour_utc < 13:
-    session = "London"
-else:
-    session = "New York"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # ======================================================
-# SYSTEM PROMPT (FASE 1)
+# PRICE SOURCE (WAJIB GANTI KE DATA REAL)
 # ======================================================
-SYSTEM_PROMPT = """
-Kamu adalah AI Market Intelligence khusus XAUUSD.
-
-PERAN:
-- Menganalisa konteks market
-- Membentuk narasi & skenario
-- BUKAN memberi sinyal trading
-- BUKAN eksekutor order
-
-ATURAN:
-- Gunakan data yang diberikan
-- Jangan mengarang sumber
-- Jangan meminta data ke user
-- Fokus pada pemahaman market
-
-GAYA:
-- Jelas
-- Masuk akal
-- Profesional
-"""
-
-def ai(prompt):
-    r = client.responses.create(
-        model="gpt-4.1-mini",
-        input=SYSTEM_PROMPT + "\n" + prompt
-    )
-    return r.output_text.strip()
+def get_price():
+    """
+    GANTI dengan source REAL:
+    - Broker API (MT5, cTrader, dll)
+    - TradingView webhook
+    - Gold / Metals price API
+    """
+    # ===== DUMMY (UNTUK TEST SAJA) =====
+    return 4550.0
 
 # ======================================================
-# DATA SOURCE (REAL – SEDERHANA DULU)
+# TELEGRAM SENDER
 # ======================================================
-def get_fundamental_calendar():
-    # ganti dengan calendar real kamu
-    return [
-        {"event": "US CPI", "impact": "High", "time": "Today"},
-        {"event": "Fed Speaker", "impact": "Medium", "time": "Upcoming"}
-    ]
-
-def get_price_data():
-    # ganti dengan API real (broker / TradingView)
-    return {
-        "current": 4550,
-        "high": 4620,
-        "low": 4480,
-        "trend_structure": "Higher High / Higher Low",
-        "volatility": "High",
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    }
-
-def get_retail_sentiment():
-    try:
-        url = "https://www.myfxbook.com/community/outlook/XAUUSD"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code != 200:
-            return None
-        buy = re.search(r'Buy\s*<span[^>]*>(\d+)%', r.text)
-        sell = re.search(r'Sell\s*<span[^>]*>(\d+)%', r.text)
-        if not buy or not sell:
-            return None
-        return {
-            "source": "MyFxBook",
-            "buy": int(buy.group(1)),
-            "sell": int(sell.group(1))
-        }
-    except:
-        return None
-
-def get_bank_bias():
-    # konteks institusional sederhana (placeholder)
-    return {
-        "source": "COT / Bank Notes",
-        "bias": "Bullish medium-term, cautious short-term"
-    }
-
-# ======================================================
-# FASE 1 — AI MODULES
-# ======================================================
-def ai_market_narrative(price, fundamental, retail, bank, session):
-    return ai(f"""
-DATA:
-Price: {price}
-Fundamental: {fundamental}
-Retail: {retail}
-Institution: {bank}
-Session: {session}
-
-TUGAS:
-Jelaskan NARASI market XAUUSD hari ini.
-Fokus pada:
-- Siapa yang dominan
-- Karakter pergerakan
-- Risiko utama
-""")
-
-def ai_scenario_tree(price, narrative, fundamental):
-    return ai(f"""
-DATA:
-Price: {price}
-Market Narrative: {narrative}
-Fundamental Context: {fundamental}
-
-TUGAS:
-Buat SCENARIO TREE pergerakan XAUUSD.
-
-FORMAT WAJIB:
-Primary Scenario (dengan %):
-Secondary Scenario (dengan %):
-Tail Risk Scenario (dengan %):
-
-Sebutkan arah & range harga.
-""")
-
-def ai_session_behavior(price, narrative, session):
-    return ai(f"""
-DATA:
-Session: {session}
-Price: {price}
-Market Narrative: {narrative}
-
-TUGAS:
-Analisa perilaku harga khas sesi ini
-dan implikasinya ke XAUUSD.
-""")
-
-# ======================================================
-# REPORT BUILDER
-# ======================================================
-def build_report(narrative, scenario, session_behavior):
-    return f"""
-📊 XAUUSD MARKET INTELLIGENCE — FASE 1
-Session: {session}
-
-🧠 Market Narrative:
-{narrative}
-
-🌳 Scenario Tree:
-{scenario}
-
-🕒 Session Behavior:
-{session_behavior}
-
-⚠️ Catatan:
-Laporan ini bersifat INTELLIGENCE.
-Belum ada sinyal trading atau eksekusi.
-""".strip()
-
-# ======================================================
-# TELEGRAM
-# ======================================================
-def send_telegram(text):
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(
+    r = requests.post(
         url,
-        json={"chat_id": CHAT_ID, "text": text},
+        json={"chat_id": CHAT_ID, "text": message},
         timeout=10
     )
+    print("TELEGRAM:", r.status_code, r.text)
+
+# ======================================================
+# WATCHDOG SETTINGS
+# ======================================================
+CHECK_INTERVAL = 60        # detik (1 menit)
+DUMP_THRESHOLD = -0.8      # % drop
+SPIKE_THRESHOLD = 0.8     # % spike
+
+# ======================================================
+# WATCHDOG CORE
+# ======================================================
+def watchdog():
+    last_price = None
+
+    send_telegram(
+        "🟢 XAUUSD WATCHDOG AKTIF\n"
+        "Monitoring real-time dimulai\n"
+        "Status: ANTI MC MODE 😎"
+    )
+
+    while True:
+        try:
+            price = get_price()
+            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+            if last_price is not None:
+                change_pct = (price - last_price) / last_price * 100
+
+                # 🚨 DUMP ALERT
+                if change_pct <= DUMP_THRESHOLD:
+                    send_telegram(
+                        f"🚨 XAUUSD DUMP ALERT\n"
+                        f"Time: {now}\n"
+                        f"Drop: {change_pct:.2f}%\n"
+                        f"Price: {last_price} → {price}\n"
+                        f"⚠️ Volatilitas ekstrem terdeteksi"
+                    )
+
+                # 🚀 SPIKE ALERT
+                elif change_pct >= SPIKE_THRESHOLD:
+                    send_telegram(
+                        f"🚀 XAUUSD SPIKE ALERT\n"
+                        f"Time: {now}\n"
+                        f"Spike: +{change_pct:.2f}%\n"
+                        f"Price: {last_price} → {price}\n"
+                        f"⚠️ Momentum agresif terdeteksi"
+                    )
+
+            last_price = price
+            time.sleep(CHECK_INTERVAL)
+
+        except Exception as e:
+            send_telegram(f"❌ WATCHDOG ERROR\n{e}")
+            time.sleep(60)
 
 # ======================================================
 # MAIN
 # ======================================================
 if __name__ == "__main__":
-    price = get_price_data()
-    fundamental = get_fundamental_calendar()
-    retail = get_retail_sentiment()
-    bank = get_bank_bias()
-
-    narrative = ai_market_narrative(price, fundamental, retail, bank, session)
-    scenario = ai_scenario_tree(price, narrative, fundamental)
-    session_behavior = ai_session_behavior(price, narrative, session)
-
-    report = build_report(narrative, scenario, session_behavior)
-    send_telegram(report)
+    watchdog()
