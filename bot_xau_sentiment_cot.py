@@ -10,6 +10,8 @@ from openai import OpenAI
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
+OANDA_API_KEY = os.environ.get("OANDA_API_KEY")
+OANDA_ENV = os.environ.get("OANDA_ENV", "practice")  # practice / live
 
 client = OpenAI(api_key=OPENAI_KEY)
 
@@ -32,15 +34,37 @@ else:
 # ======================================================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+    requests.post(
+        url,
+        json={"chat_id": CHAT_ID, "text": msg},
+        timeout=10
+    )
 
 # ======================================================
-# DATA SOURCE (GANTI KE REAL)
+# OANDA REAL PRICE (XAUUSD)
 # ======================================================
 def get_price():
-    return 4550.0  # dummy
+    if OANDA_ENV == "live":
+        base_url = "https://api-fxtrade.oanda.com"
+    else:
+        base_url = "https://api-fxpractice.oanda.com"
 
+    url = f"{base_url}/v3/instruments/XAU_USD/pricing"
+    headers = {"Authorization": f"Bearer {OANDA_API_KEY}"}
+    params = {"instruments": "XAU_USD"}
+
+    r = requests.get(url, headers=headers, params=params, timeout=10)
+    data = r.json()
+
+    bid = float(data["prices"][0]["bids"][0]["price"])
+    ask = float(data["prices"][0]["asks"][0]["price"])
+    return (bid + ask) / 2
+
+# ======================================================
+# MARKET CONTEXT
+# ======================================================
 def get_daily_levels():
+    # placeholder — bisa diganti high/low broker
     return {"high": 4620, "low": 4480}
 
 def get_fundamental_events():
@@ -60,9 +84,9 @@ def get_bank_bias():
 SYSTEM_PROMPT = """
 Kamu adalah AI Market Intelligence XAUUSD.
 
-TUGAS:
+FOKUS:
+- Membaca reaksi harga real
 - Menilai risiko arah (bukan tebak angka)
-- Menjelaskan reaksi market
 - Anti sensasional & anti overconfidence
 
 Jawaban ringkas, tegas, profesional.
@@ -76,26 +100,26 @@ def ai(prompt):
     return r.output_text.strip()
 
 # ======================================================
-# EVENT PRE-BIAS (ARAH RISIKO)
+# EVENT PRE-BIAS
 # ======================================================
 def event_pre_bias(price, levels):
     if price >= levels["high"] * 0.995:
         return (
             "Harga dekat resistance.\n"
-            "➡️ Jika CPI lebih rendah dari ekspektasi → potensi SPIKE XAUUSD.\n"
-            "➡️ Jika CPI lebih tinggi → risiko REVERSAL tajam."
+            "➡️ CPI lemah → potensi SPIKE XAUUSD.\n"
+            "➡️ CPI kuat → risiko REVERSAL tajam."
         )
     elif price <= levels["low"] * 1.005:
         return (
             "Harga dekat support.\n"
-            "➡️ Jika CPI lebih tinggi → potensi DUMP lanjutan.\n"
-            "➡️ Jika CPI lebih rendah → short covering risk."
+            "➡️ CPI kuat → potensi DUMP lanjutan.\n"
+            "➡️ CPI lemah → short covering risk."
         )
     else:
         return (
             "Harga di tengah range.\n"
             "➡️ Risiko whipsaw dua arah.\n"
-            "➡️ Arah valid biasanya muncul 15–30 menit pasca rilis."
+            "➡️ Arah valid muncul 15–30 menit pasca rilis."
         )
 
 # ======================================================
@@ -104,10 +128,10 @@ def event_pre_bias(price, levels):
 def post_event_analysis(pre_price, post_price):
     change = (post_price - pre_price) / pre_price * 100
     prompt = f"""
-EVENT TELAH RILIS (XAUUSD).
+EVENT TELAH RILIS (XAUUSD)
 
-Harga sebelum rilis: {pre_price}
-Harga setelah rilis: {post_price}
+Harga sebelum rilis: {pre_price:.2f}
+Harga setelah rilis: {post_price:.2f}
 Perubahan: {change:.2f}%
 
 ANALISA:
@@ -123,9 +147,9 @@ ANALISA:
 def watchdog():
     last_price = None
     levels = get_daily_levels()
-    event_state = {}   # anti spam & state event
+    event_state = {}
 
-    send_telegram("🟢 XAUUSD GUARDIAN AKTIF\nMode: ANTI MC 😎")
+    send_telegram("🟢 XAUUSD GUARDIAN AKTIF\nHarga REAL OANDA • Anti MC 😎")
 
     while True:
         try:
@@ -133,7 +157,7 @@ def watchdog():
             now = datetime.utcnow()
 
             # ===============================
-            # PRICE SHOCK ALERT
+            # PRICE SHOCK
             # ===============================
             if last_price:
                 change = (price - last_price) / last_price * 100
@@ -142,11 +166,11 @@ def watchdog():
                         f"🚨 PRICE SHOCK\n"
                         f"Session: {session}\n"
                         f"Change: {change:.2f}%\n"
-                        f"Price: {last_price} → {price}"
+                        f"Price: {last_price:.2f} → {price:.2f}"
                     )
 
             # ===============================
-            # EVENT LOGIC (NO SPAM)
+            # EVENT LOGIC (PRE + POST)
             # ===============================
             for e in get_fundamental_events():
                 h, m = map(int, e["time_utc"].split(":"))
@@ -161,7 +185,7 @@ def watchdog():
                         f"{e['event']} ({e['impact']})\n"
                         f"Dalam < 30 menit\n\n"
                         f"PRE-EVENT BIAS:\n{bias}\n\n"
-                        f"⚠️ Jangan entry sebelum reaksi jelas"
+                        f"⚠️ Tunggu reaksi market"
                     )
                     event_state[e["event"]] = {
                         "time": event_time,
@@ -169,7 +193,7 @@ def watchdog():
                         "post_sent": False
                     }
 
-                # POST-EVENT (ONCE, 15 MENIT)
+                # POST-EVENT (15 MENIT)
                 if e["event"] in event_state:
                     state = event_state[e["event"]]
                     if not state["post_sent"] and (now - state["time"]).total_seconds() >= 900:
