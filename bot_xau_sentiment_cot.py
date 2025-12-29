@@ -69,6 +69,7 @@ def calculate_score(buy, sell):
 def get_ai_market_and_event_mode():
     prompt = """
 Tentukan kondisi pasar emas (XAUUSD) HARI INI https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
+harga terakhir 4461.50 kamu jangan salah ambil data nya data yang kamu kasih beda
 
 Output:
 Market Mode: Trending / Ranging / Volatile / Event-driven
