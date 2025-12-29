@@ -8,9 +8,9 @@ import threading
 # ======================================================
 # CONFIG — GANTI INI SAJA
 # ======================================================
-TELEGRAM_TOKEN = "ISI_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "ISI_CHAT_ID"
-OPENAI_API_KEY = "ISI_OPENAI_API_KEY"
+TELEGRAM_TOKEN = 
+CHAT_ID = 
+OPENAI_API_KEY =
 
 CHECK_INTERVAL = 60      # detik
 PRICE_SHOCK = 0.6        # % per menit
