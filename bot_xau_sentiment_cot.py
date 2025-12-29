@@ -1,180 +1,196 @@
-import os
-import time
-from datetime import datetime
-import requests
-from flask import Flask, request, jsonify
 from openai import OpenAI
-import threading
+import os
+import requests
+import re
+from datetime import datetime
 
-# ======================================================
-# CONFIG — VIA ENVIRONMENT VARIABLE (AMAN)
-# ======================================================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
-CHECK_INTERVAL = 60      # detik
-PRICE_SHOCK = 0.6        # % per menit
-
-# ======================================================
+# =========================
 # INIT
-# ======================================================
-if not TELEGRAM_TOKEN or not CHAT_ID or not OPENAI_API_KEY:
-    raise RuntimeError("ENV VAR belum lengkap: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / OPENAI_API_KEY")
+# =========================
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-app = Flask(__name__)
+# =========================
+# SESSION
+# =========================
+hour_utc = datetime.utcnow().hour
+session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
 
-latest_price = None
-latest_time = None
-
-# ======================================================
-# SESSION DETECTION
-# ======================================================
-def get_session():
-    h = datetime.utcnow().hour
-    if h < 7:
-        return "Asia"
-    elif h < 13:
-        return "London"
-    else:
-        return "New York"
-
-# ======================================================
-# TELEGRAM
-# ======================================================
-def send_telegram(msg):
+# =========================
+# RETAIL SENTIMENT
+# =========================
+def get_retail_sentiment():
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+        url = "https://www.myfxbook.com/community/outlook/XAUUSD"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
-            print("TELEGRAM ERROR:", r.text)
-    except Exception as e:
-        print("TELEGRAM EXCEPTION:", e)
+            return None
 
-# ======================================================
-# AI CORE
-# ======================================================
-SYSTEM_PROMPT = """
-Kamu adalah AI Market Intelligence XAUUSD.
+        html = r.text
+        buy = re.search(r'Buy\s*<span[^>]*>(\d+)%', html)
+        sell = re.search(r'Sell\s*<span[^>]*>(\d+)%', html)
+        if not buy or not sell:
+            return None
 
-Tugas:
-- Menentukan arah dominan (bullish / bearish / whipsaw)
-- Menilai risiko lanjutan
-- Berdasarkan pergerakan harga REAL
-- Kamu harus pintar dalam prediksi xauusd/gold 
-- Kirim laporan setiap 5 menit pergerakan xauusd potensi kemana
-- sebutkan dalam angka dan presentasi nya misal pergerakan gold 20% berish 80% bulish
-- Kamu harus berkembang dan pintar dalam analisa dan kirim data fundamental kamu analisa potensi bulish atau berish
+        buy = int(buy.group(1))
+        sell = int(sell.group(1))
+        if buy + sell != 100:
+            return None
 
-Jawaban singkat, tegas, profesional.
+        return buy, sell
+    except Exception:
+        return None
+
+# =========================
+# SCORING
+# =========================
+def calculate_score(buy, sell):
+    score = 50
+    if buy >= 75 or sell >= 75:
+        score -= 15
+    else:
+        score += 10
+    score += 15  # COT bias
+    score = max(0, min(100, score))
+
+    if score >= 70:
+        label = "Bullish Bias (Cautious)"
+    elif score >= 50:
+        label = "Netral"
+    else:
+        label = "Bearish Bias"
+    return score, label
+
+# =========================
+# LEVEL 4–5: AI MARKET & EVENT MODE
+# =========================
+def get_ai_market_and_event_mode():
+    prompt = """
+Tentukan kondisi pasar emas (XAUUSD) HARI INI.
+
+Output:
+Market Mode: Trending / Ranging / Volatile / Event-driven
+Event Context: Pre-Event / Event Day / Post-Event / Normal Day
+
+Pertimbangkan Fed, inflasi, NFP, geopolitik, FOMC.
+
+Format:
+Market Mode: ...
+Event Context: ...
 """
-
-def ai(prompt):
     r = client.responses.create(
         model="gpt-4.1-mini",
-        input=SYSTEM_PROMPT + "\n" + prompt
+        input=prompt
     )
     return r.output_text.strip()
 
-# ======================================================
-# FUNDAMENTAL EVENT
-# ======================================================
-def get_fundamental_events():
-    return [
-        {"event": "US CPI", "impact": "High", "time_utc": "13:30"}
-    ]
+# =========================
+# LEVEL 8: EXTREME ALERT
+# =========================
+def get_extreme_alert(retail, score):
+    alerts = []
 
-def post_event_analysis(pre, post):
-    return ai(
-        f"Harga sebelum event: {pre}\n"
-        f"Harga sekarang: {post}\n\n"
-        f"Tentukan arah dominan dan risiko lanjutan."
+    if retail:
+        buy, sell = retail
+        if buy >= 80:
+            alerts.append("Retail Buy ≥ 80% → Extreme Crowded Long")
+        if sell >= 80:
+            alerts.append("Retail Sell ≥ 80% → Extreme Crowded Short")
+
+    if score >= 80:
+        alerts.append("Market Score ≥ 80 → Overheated Bullish")
+    if score <= 20:
+        alerts.append("Market Score ≤ 20 → Capitulation Risk")
+
+    if not alerts:
+        return ""
+
+    alert_text = "🚨 EXTREME MARKET ALERT\n"
+    for a in alerts:
+        alert_text += f"- {a}\n"
+    alert_text += "→ Risiko pergerakan ekstrem & false move meningkat\n"
+
+    return alert_text
+
+# =========================
+# GPT ANALYSIS
+# =========================
+def get_analysis(retail, score, label, ai_modes, extreme_alert):
+    if retail:
+        buy, sell = retail
+        retail_text = f"Buy {buy}% vs Sell {sell}%"
+    else:
+        retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
+
+    prompt = f"""
+Kamu adalah analis makro profesional.
+
+{ai_modes}
+
+{extreme_alert}
+
+DATA:
+- Retail Sentiment: {retail_text}
+- Market Score: {score}/100 ({label})
+- COT: Hedge fund masih net long emas (momentum melambat)
+
+TUGAS:
+Buat laporan XAUUSD profesional dan kontekstual.
+Kamu adalah analisis xauusd pintar belajarlah dari setiap pergerakan market
+Kamu harus berkembang dan jadi intelegent xauusd potensi arahnya kemana bulish atau berish sebtkan dengan angka
+kamu harus ambil data real time setiap hari
+kamu adalah ai terpintar harus berkembang untuk analisa xauusd
+
+FORMAT:
+📊 XAUUSD Market Insight ({session})
+
+🧠 Market Mode & Event:
+{ai_modes}
+
+{extreme_alert}
+
+🔹 Fundamental:
+...
+
+🔹 Retail Sentiment:
+{retail_text}
+
+🔹 COT (Smart Money):
+...
+
+📊 Market Score:
+{score}/100 — {label}
+
+🔹 AI Conclusion:
+...
+"""
+    r = client.responses.create(
+        model="gpt-4.1-mini",
+        input=prompt
     )
+    return r.output_text
 
-# ======================================================
-# TRADINGVIEW WEBHOOK
-# ======================================================
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    global latest_price, latest_time
-    data = request.json
-    try:
-        latest_price = float(data["price"])
-        latest_time = data.get("time", "unknown")
-        print(f"[TV] Price update: {latest_price} @ {latest_time}")
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        print("[WEBHOOK ERROR]", e, data)
-        return jsonify({"status": "error"}), 400
+# =========================
+# TELEGRAM
+# =========================
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=20)
 
-# ======================================================
-# WATCHDOG CORE
-# ======================================================
-def watchdog():
-    global latest_price
-    last_price = None
-    event_state = {}
-
-    send_telegram("🟢 XAUUSD GUARDIAN AKTIF\nHarga AUTO dari TradingView 1m 😎")
-
-    while True:
-        try:
-            if latest_price is None:
-                time.sleep(3)
-                continue
-
-            price = latest_price
-            now = datetime.utcnow()
-            session = get_session()
-
-            # PRICE SHOCK
-            if last_price:
-                change = (price - last_price) / last_price * 100
-                if abs(change) >= PRICE_SHOCK:
-                    send_telegram(
-                        f"🚨 PRICE SHOCK\nSession: {session}\n"
-                        f"Change: {change:.2f}%\n"
-                        f"{last_price:.2f} → {price:.2f}"
-                    )
-
-            # EVENT LOGIC
-            for e in get_fundamental_events():
-                h, m = map(int, e["time_utc"].split(":"))
-                event_time = now.replace(hour=h, minute=m, second=0)
-                dt = (event_time - now).total_seconds()
-
-                if 0 <= dt <= 1800 and e["event"] not in event_state:
-                    send_telegram(
-                        f"⏰ EVENT WARNING\n{e['event']} ({e['impact']})\n"
-                        f"Harga saat ini: {price:.2f}\nTunggu reaksi market."
-                    )
-                    event_state[e["event"]] = {
-                        "time": event_time,
-                        "pre": price,
-                        "done": False
-                    }
-
-                if e["event"] in event_state:
-                    st = event_state[e["event"]]
-                    if not st["done"] and (now - st["time"]).total_seconds() >= 900:
-                        send_telegram(
-                            f"🧠 POST EVENT ANALYSIS\n{e['event']}\n\n"
-                            f"{post_event_analysis(st['pre'], price)}"
-                        )
-                        st["done"] = True
-
-            last_price = price
-            time.sleep(CHECK_INTERVAL)
-
-        except Exception as err:
-            send_telegram(f"❌ GUARDIAN ERROR\n{err}")
-            time.sleep(30)
-
-# ======================================================
-# RUN
-# ======================================================
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
-    threading.Thread(target=watchdog, daemon=True).start()
-    print("🟢 Guardian + Webhook RUNNING (port 5000)")
-    app.run(host="0.0.0.0", port=5000)
+    retail = get_retail_sentiment()
+    if retail:
+        buy, sell = retail
+        score, label = calculate_score(buy, sell)
+    else:
+        score, label = 50, "Netral (Data Terbatas)"
+
+    ai_modes = get_ai_market_and_event_mode()
+    extreme_alert = get_extreme_alert(retail, score)
+    analysis = get_analysis(retail, score, label, ai_modes, extreme_alert)
+    send_telegram(analysis)
