@@ -69,7 +69,6 @@ def calculate_score(buy, sell):
 def get_ai_market_and_event_mode():
     prompt = """
 Tentukan kondisi pasar emas (XAUUSD) HARI INI tanggal 29 Desember 2025 update setiap hari setiap saat ketika ada perubahan https://id.tradingview.com
-Harga emas saat ini (1983.45) salah yang benar adalah harga terakhir 4461.50 Hari ini tanggal 29 Desember 2025
 
 Output:
 Market Mode: Trending / Ranging / Volatile / Event-driven
@@ -133,6 +132,10 @@ Kamu harus belajar Teknikal juga dari internet
 kamu masih salah input angka dalam penyampaian angka xauusd
 Kamu cek data harga terbaru di link ini https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
 Data angka yang kamu kirim harga lama bukan terbaru
+Harga emas saat ini (1983.45) salah, yang benar adalah harga terakhir 4461.50 Hari ini tanggal 29 Desember 2025
+Buatkan Analisa Harian dengan chart pattern inikator RSI MACD untuk Xauusd
+Jawab Pertanyaan saya di chatbot telegram
+
 {ai_modes}
 
 {extreme_alert}
