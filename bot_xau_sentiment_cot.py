@@ -68,7 +68,7 @@ def calculate_score(buy, sell):
 # =========================
 def get_ai_market_and_event_mode():
     prompt = """
-Tentukan kondisi pasar emas (XAUUSD) HARI INI.
+Tentukan kondisi pasar emas (XAUUSD) HARI INI. https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
 
 Output:
 Market Mode: Trending / Ranging / Volatile / Event-driven
@@ -125,7 +125,8 @@ def get_analysis(retail, score, label, ai_modes, extreme_alert):
         retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
 
     prompt = f"""
-Kamu adalah analis makro profesional.
+Kamu adalah analis macro profesional.
+seiring berjalan nya waktu kamu terus berkembang dan pintar dalam analisa
 
 {ai_modes}
 
@@ -198,31 +199,6 @@ def check_manual_command():
         return chat_id
 
     return None
-# =========================
-# MANUAL LOOP (/xau)
-# =========================
-if __name__ == "__main__":
-    last_update_id = 0
-
-    while True:
-        try:
-            manual, last_update_id = check_manual_command(last_update_id)
-
-            if manual:
-                # === GANTI BARIS DI BAWAH INI ===
-                analysis_text = analysis  # <-- pakai variabel analisa yang SUDAH ADA
-                # ===============================
-
-                send_telegram(
-                    "📊 MANUAL XAUUSD UPDATE\n\n" + analysis_text
-                )
-                time.sleep(5)  # anti spam
-
-            time.sleep(10)
-
-        except Exception as e:
-            print("MANUAL LOOP ERROR:", e)
-            time.sleep(10)
 
 # =========================
 # MAIN
