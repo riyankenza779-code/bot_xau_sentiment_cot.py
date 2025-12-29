@@ -68,7 +68,7 @@ def calculate_score(buy, sell):
 # =========================
 def get_ai_market_and_event_mode():
     prompt = """
-Tentukan kondisi pasar emas (XAUUSD) HARI INI tanggal 29 Desember 2025 update setiap hari setiap saat ketika ada perubahan https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
+Tentukan kondisi pasar emas (XAUUSD) HARI INI tanggal 29 Desember 2025 update setiap hari setiap saat ketika ada perubahan https://id.tradingview.com
 harga terakhir 4461.50 Hari ini tanggal 29 Desember 2025
 
 Output:
