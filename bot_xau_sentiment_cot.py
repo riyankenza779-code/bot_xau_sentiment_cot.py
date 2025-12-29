@@ -127,6 +127,8 @@ def get_analysis(retail, score, label, ai_modes, extreme_alert):
     prompt = f"""
 Kamu adalah analis macro profesional.
 seiring berjalan nya waktu kamu terus berkembang dan pintar dalam analisa
+Kamu juga semakin pintar dalam Teknikal analisa xauusd
+Kamu harus belajar Teknikal juga dari internet
 
 {ai_modes}
 
