@@ -68,7 +68,7 @@ def calculate_score(buy, sell):
 # =========================
 def get_ai_market_and_event_mode():
     prompt = """
-Tentukan kondisi pasar emas (XAUUSD) HARI INI. https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
+Tentukan kondisi pasar emas (XAUUSD) HARI INI https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
 
 Output:
 Market Mode: Trending / Ranging / Volatile / Event-driven
@@ -129,9 +129,9 @@ Kamu adalah analis macro profesional.
 seiring berjalan nya waktu kamu terus berkembang dan pintar dalam analisa
 Kamu juga semakin pintar dalam Teknikal analisa xauusd
 Kamu harus belajar Teknikal juga dari internet
-Kamu cek data di sini https://www.myfxbook.com/
 kamu masih salah input angka dalam penyampaian angka xauusd
-
+Kamu cek data harga terbaru di link ini https://id.tradingview.com/chart/QUgdxK16/?symbol=OANDA%3AXAUUSD
+Data angka yang kamu kirim harga lama bukan terbaru
 {ai_modes}
 
 {extreme_alert}
@@ -153,6 +153,7 @@ Gunakan link ini untuk mencari informasi terkini analisa pasar https://www.inves
 Gunakan link ini untuk mencari data ekonomi mendalam https://tradingeconomics.com/
 Gunakan link ini untuk mecari informasi mendalam mengenai xauusd https://www.bloomberg.com/  https://www.reuters.com/   https://www.cnbc.com/economy/
 Gunakan link ini untuk analisa forex dan trading https://www.dailyforex.com/  https://www.fxstreet.com/ https://www.myfxbook.com/
+
 FORMAT:
 📊 XAUUSD Market Insight ({session})
 
