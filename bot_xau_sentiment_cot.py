@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 import requests
@@ -6,11 +7,11 @@ from openai import OpenAI
 import threading
 
 # ======================================================
-# CONFIG — GANTI INI SAJA
+# CONFIG — VIA ENVIRONMENT VARIABLE (AMAN)
 # ======================================================
-TELEGRAM_TOKEN = 
-CHAT_ID = 
-OPENAI_API_KEY =
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 CHECK_INTERVAL = 60      # detik
 PRICE_SHOCK = 0.6        # % per menit
@@ -18,6 +19,9 @@ PRICE_SHOCK = 0.6        # % per menit
 # ======================================================
 # INIT
 # ======================================================
+if not TELEGRAM_TOKEN or not CHAT_ID or not OPENAI_API_KEY:
+    raise RuntimeError("ENV VAR belum lengkap: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / OPENAI_API_KEY")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 app = Flask(__name__)
 
@@ -40,18 +44,30 @@ def get_session():
 # TELEGRAM
 # ======================================================
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        r = requests.post(
+            url,
+            json={"chat_id": CHAT_ID, "text": msg},
+            timeout=10
+        )
+        if r.status_code != 200:
+            print("TELEGRAM ERROR:", r.text)
+    except Exception as e:
+        print("TELEGRAM EXCEPTION:", e)
 
 # ======================================================
 # AI CORE
 # ======================================================
 SYSTEM_PROMPT = """
 Kamu adalah AI Market Intelligence XAUUSD.
+
 Tugas:
 - Menentukan arah dominan (bullish / bearish / whipsaw)
 - Menilai risiko lanjutan
 - Berdasarkan pergerakan harga REAL
+- Kasih prediksi harga akurat dengan format presentase dan angka nya juga
+
 Jawaban singkat, tegas, profesional.
 """
 
@@ -63,7 +79,7 @@ def ai(prompt):
     return r.output_text.strip()
 
 # ======================================================
-# FUNDAMENTAL EVENT (EDIT JIKA PERLU)
+# FUNDAMENTAL EVENT
 # ======================================================
 def get_fundamental_events():
     return [
@@ -84,13 +100,14 @@ def post_event_analysis(pre, post):
 def webhook():
     global latest_price, latest_time
     data = request.json
+
     try:
         latest_price = float(data["price"])
         latest_time = data.get("time", "unknown")
         print(f"[TV] Price update: {latest_price} @ {latest_time}")
         return jsonify({"status": "ok"})
     except Exception as e:
-        print("[WEBHOOK ERROR]", e)
+        print("[WEBHOOK ERROR]", e, data)
         return jsonify({"status": "error"}), 400
 
 # ======================================================
@@ -135,7 +152,7 @@ def watchdog():
                 event_time = now.replace(hour=h, minute=m, second=0)
                 dt = (event_time - now).total_seconds()
 
-                # PRE EVENT
+                # PRE EVENT (ONCE)
                 if 0 <= dt <= 1800 and e["event"] not in event_state:
                     send_telegram(
                         f"⏰ EVENT WARNING\n"
@@ -149,7 +166,7 @@ def watchdog():
                         "done": False
                     }
 
-                # POST EVENT
+                # POST EVENT (ONCE, ≥15 MENIT)
                 if e["event"] in event_state:
                     st = event_state[e["event"]]
                     if not st["done"] and (now - st["time"]).total_seconds() >= 900:
