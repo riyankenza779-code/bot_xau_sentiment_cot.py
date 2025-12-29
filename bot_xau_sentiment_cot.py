@@ -5,6 +5,32 @@ import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import threading
+name: XAUUSD Guardian
+
+on: [push]
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run bot
+        run: |
+          python xauusd_guardian_tv_allinone.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 # ======================================================
 # CONFIG — VIA ENVIRONMENT VARIABLE (AMAN)
@@ -67,6 +93,8 @@ Tugas:
 - Menilai risiko lanjutan
 - Berdasarkan pergerakan harga REAL
 - Kasih prediksi harga akurat dengan format presentase dan angka nya juga
+- Kamu harus pintar dan berkembang dalam dunia trading xauusd/gold
+- Update data setiap hari kamu analisa pergerakan nya
 
 Jawaban singkat, tegas, profesional.
 """
