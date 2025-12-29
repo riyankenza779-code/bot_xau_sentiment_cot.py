@@ -41,56 +41,37 @@ def send_telegram(msg):
     print("TELEGRAM:", r.status_code)
 
 # ======================================================
-# PRICE SOURCE (WAJIB GANTI KE REAL)
+# PRICE & MARKET DATA (GANTI KE REAL)
 # ======================================================
 def get_price():
-    # GANTI ke broker / TradingView / Metals API
     return 4550.0  # dummy
 
 def get_daily_levels():
-    return {
-        "high": 4620,
-        "low": 4480
-    }
+    return {"high": 4620, "low": 4480}
 
 def get_fundamental_events():
     return [
-        {"event": "US CPI", "impact": "High", "time": "Today"},
-        {"event": "Fed Speaker", "impact": "Medium", "time": "Upcoming"}
+        {"event": "US CPI", "impact": "High", "time_utc": "13:30"}
     ]
 
 def get_retail_sentiment():
-    return {
-        "source": "MyFxBook",
-        "buy": 78,
-        "sell": 22
-    }
+    return {"buy": 78, "sell": 22}
 
 def get_bank_bias():
-    return {
-        "source": "COT / Bank Notes",
-        "bias": "Bullish medium-term, cautious short-term"
-    }
+    return {"bias": "Bullish medium-term, cautious short-term"}
 
 # ======================================================
-# AI SYSTEM PROMPT (OTAK)
+# AI SYSTEM PROMPT
 # ======================================================
 SYSTEM_PROMPT = """
 Kamu adalah AI Market Intelligence khusus XAUUSD.
 
-PERAN:
-- Membaca konteks market
-- Membuat narasi & skenario
-- Menjelaskan pergerakan ekstrem
+FOKUS:
+- Membaca konteks event & harga
+- Menilai risiko arah, bukan menebak angka
+- Anti sensasional & anti overconfidence
 
-BATASAN:
-- Bukan eksekutor order
-- Tidak memberi sinyal entry
-
-GAYA:
-- Tenang
-- Tegas
-- Masuk akal
+Jawab ringkas, profesional, dan kontekstual.
 """
 
 def ai(prompt):
@@ -101,38 +82,37 @@ def ai(prompt):
     return r.output_text.strip()
 
 # ======================================================
-# AI INTELLIGENCE
+# EVENT PRE-BIAS
 # ======================================================
-def ai_intelligence(price, change):
-    prompt = f"""
-KONDISI MARKET:
-Session: {session}
-Harga sekarang: {price}
-Perubahan cepat: {change:.2f}%
+def event_pre_bias(price, levels):
+    if price > levels["high"] * 0.995:
+        return "Bias bullish jika data USD melemah. Risiko spike XAUUSD."
+    elif price < levels["low"] * 1.005:
+        return "Bias bearish jika data USD kuat. Risiko dump XAUUSD."
+    else:
+        return (
+            "Netral. Risiko whipsaw dua arah.\n"
+            "Tunggu reaksi 15–30 menit pasca rilis."
+        )
 
-DATA TAMBAHAN:
-- Fundamental: {get_fundamental_events()}
-- Retail: {get_retail_sentiment()}
-- Institutional: {get_bank_bias()}
+# ======================================================
+# POST-EVENT ANALYSIS
+# ======================================================
+def post_event_analysis(pre_price, post_price):
+    change = (post_price - pre_price) / pre_price * 100
+    prompt = f"""
+EVENT TELAH RILIS.
+
+Harga sebelum rilis: {pre_price}
+Harga setelah rilis: {post_price}
+Perubahan: {change:.2f}%
 
 TUGAS:
-Jelaskan:
-1. Apa kemungkinan penyebab pergerakan ini
-2. Apakah continuation atau fake move
-3. Risiko 30–60 menit ke depan
+- Apakah reaksi ini valid atau fake move?
+- Risiko lanjutan 30–60 menit ke depan
+- Sikap terbaik (follow / wait / fade)
 """
     return ai(prompt)
-
-# ======================================================
-# EVENT PROXIMITY
-# ======================================================
-def check_event_proximity():
-    now = datetime.utcnow()
-    alerts = []
-    for e in get_fundamental_events():
-        if e["impact"] == "High" and e["time"] == "Today":
-            alerts.append(e)
-    return alerts
 
 # ======================================================
 # WATCHDOG CORE
@@ -140,55 +120,59 @@ def check_event_proximity():
 def watchdog():
     last_price = None
     levels = get_daily_levels()
+    last_event_alert = None
 
-    send_telegram("🟢 XAUUSD GUARDIAN AKTIF\nAnti MC Mode: ON 😎")
+    send_telegram("🟢 XAUUSD GUARDIAN AKTIF\nMode: ANTI MC 😎")
 
     while True:
         try:
             price = get_price()
-            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            now = datetime.utcnow()
 
+            # ===============================
+            # PRICE MOVEMENT ALERT
+            # ===============================
             if last_price:
                 change = (price - last_price) / last_price * 100
 
-                # 🚨 DUMP / SPIKE
-                if change <= DUMP_THRESHOLD or change >= SPIKE_THRESHOLD:
-                    direction = "DUMP" if change < 0 else "SPIKE"
-
+                if abs(change) >= SPIKE_THRESHOLD:
                     send_telegram(
-                        f"🚨 XAUUSD {direction}\n"
-                        f"Waktu: {now}\n"
-                        f"Perubahan: {change:.2f}%\n"
-                        f"Harga: {last_price} → {price}"
+                        f"🚨 PRICE SHOCK\n"
+                        f"Change: {change:.2f}%\n"
+                        f"Price: {last_price} → {price}"
                     )
 
-                    analysis = ai_intelligence(price, change)
-                    send_telegram("🧠 AI ANALYSIS\n" + analysis)
+            # ===============================
+            # EVENT PRE-BIAS ALERT
+            # ===============================
+            for e in get_fundamental_events():
+                h, m = map(int, e["time_utc"].split(":"))
+                event_time = now.replace(hour=h, minute=m, second=0)
 
-                # 📉 BREAK LOW
-                if price <= levels["low"]:
-                    send_telegram(
-                        f"📉 BREAK DAILY LOW\n"
-                        f"Level: {levels['low']}\n"
-                        f"Harga: {price}"
-                    )
+                if 0 <= (event_time - now).total_seconds() <= 1800:
+                    if last_event_alert != e["event"]:
+                        bias = event_pre_bias(price, levels)
+                        send_telegram(
+                            f"⏰ EVENT WARNING\n"
+                            f"{e['event']} ({e['impact']})\n"
+                            f"Dalam < 30 menit\n\n"
+                            f"Pre-Event Bias:\n{bias}\n\n"
+                            f"⚠️ Hindari entry sebelum reaksi jelas"
+                        )
+                        last_event_alert = e["event"]
+                        pre_event_price = price
 
-                # 📈 BREAK HIGH
-                if price >= levels["high"]:
-                    send_telegram(
-                        f"📈 BREAK DAILY HIGH\n"
-                        f"Level: {levels['high']}\n"
-                        f"Harga: {price}"
-                    )
-
-            # ⏰ EVENT WARNING
-            events = check_event_proximity()
-            for e in events:
-                send_telegram(
-                    f"⏰ EVENT WARNING\n"
-                    f"{e['event']} ({e['impact']})\n"
-                    f"Hari ini — volatilitas tinggi"
-                )
+                # ===============================
+                # POST-EVENT ANALYSIS (15 MENIT)
+                # ===============================
+                if last_event_alert == e["event"]:
+                    if (now - event_time).total_seconds() >= 900:
+                        analysis = post_event_analysis(pre_event_price, price)
+                        send_telegram(
+                            f"🧠 POST-EVENT ANALYSIS\n"
+                            f"{e['event']}\n\n{analysis}"
+                        )
+                        last_event_alert = None
 
             last_price = price
             time.sleep(CHECK_INTERVAL)
