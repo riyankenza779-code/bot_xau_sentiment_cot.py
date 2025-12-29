@@ -1,192 +1,197 @@
 from openai import OpenAI
-import os
-import requests
-import re
+import os, requests, re
 from datetime import datetime
 
-# =========================
+# ======================================================
 # INIT
-# =========================
+# ======================================================
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# =========================
-# SESSION
-# =========================
+# ======================================================
+# SESSION DETECTION
+# ======================================================
 hour_utc = datetime.utcnow().hour
-session = "PAGI – Asia Session" if hour_utc < 7 else "MALAM – US Session"
+if hour_utc < 7:
+    session = "Asia"
+elif hour_utc < 13:
+    session = "London"
+else:
+    session = "New York"
 
-# =========================
-# RETAIL SENTIMENT
-# =========================
-def get_retail_sentiment():
-    try:
-        url = "https://www.myfxbook.com/community/outlook/XAUUSD"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code != 200:
-            return None
+# ======================================================
+# SYSTEM PROMPT (FASE 1)
+# ======================================================
+SYSTEM_PROMPT = """
+Kamu adalah AI Market Intelligence khusus XAUUSD.
 
-        html = r.text
-        buy = re.search(r'Buy\s*<span[^>]*>(\d+)%', html)
-        sell = re.search(r'Sell\s*<span[^>]*>(\d+)%', html)
-        if not buy or not sell:
-            return None
+PERAN:
+- Menganalisa konteks market
+- Membentuk narasi & skenario
+- BUKAN memberi sinyal trading
+- BUKAN eksekutor order
 
-        buy = int(buy.group(1))
-        sell = int(sell.group(1))
-        if buy + sell != 100:
-            return None
+ATURAN:
+- Gunakan data yang diberikan
+- Jangan mengarang sumber
+- Jangan meminta data ke user
+- Fokus pada pemahaman market
 
-        return buy, sell
-    except Exception:
-        return None
-
-# =========================
-# SCORING
-# =========================
-def calculate_score(buy, sell):
-    score = 50
-    if buy >= 75 or sell >= 75:
-        score -= 15
-    else:
-        score += 10
-    score += 15  # COT bias
-    score = max(0, min(100, score))
-
-    if score >= 70:
-        label = "Bullish Bias (Cautious)"
-    elif score >= 50:
-        label = "Netral"
-    else:
-        label = "Bearish Bias"
-    return score, label
-
-# =========================
-# LEVEL 4–5: AI MARKET & EVENT MODE
-# =========================
-def get_ai_market_and_event_mode():
-    prompt = """
-Tentukan kondisi pasar emas (XAUUSD) HARI INI.
-
-Output:
-Market Mode: Trending / Ranging / Volatile / Event-driven
-Event Context: Pre-Event / Event Day / Post-Event / Normal Day
-
-Pertimbangkan Fed, inflasi, NFP, geopolitik, FOMC.
-
-Format:
-Market Mode: ...
-Event Context: ...
+GAYA:
+- Jelas
+- Masuk akal
+- Profesional
 """
+
+def ai(prompt):
     r = client.responses.create(
         model="gpt-4.1-mini",
-        input=prompt
+        input=SYSTEM_PROMPT + "\n" + prompt
     )
     return r.output_text.strip()
 
-# =========================
-# LEVEL 8: EXTREME ALERT
-# =========================
-def get_extreme_alert(retail, score):
-    alerts = []
+# ======================================================
+# DATA SOURCE (REAL – SEDERHANA DULU)
+# ======================================================
+def get_fundamental_calendar():
+    # ganti dengan calendar real kamu
+    return [
+        {"event": "US CPI", "impact": "High", "time": "Today"},
+        {"event": "Fed Speaker", "impact": "Medium", "time": "Upcoming"}
+    ]
 
-    if retail:
-        buy, sell = retail
-        if buy >= 80:
-            alerts.append("Retail Buy ≥ 80% → Extreme Crowded Long")
-        if sell >= 80:
-            alerts.append("Retail Sell ≥ 80% → Extreme Crowded Short")
+def get_price_data():
+    # ganti dengan API real (broker / TradingView)
+    return {
+        "current": 4550,
+        "high": 4620,
+        "low": 4480,
+        "trend_structure": "Higher High / Higher Low",
+        "volatility": "High",
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    }
 
-    if score >= 80:
-        alerts.append("Market Score ≥ 80 → Overheated Bullish")
-    if score <= 20:
-        alerts.append("Market Score ≤ 20 → Capitulation Risk")
+def get_retail_sentiment():
+    try:
+        url = "https://www.myfxbook.com/community/outlook/XAUUSD"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return None
+        buy = re.search(r'Buy\s*<span[^>]*>(\d+)%', r.text)
+        sell = re.search(r'Sell\s*<span[^>]*>(\d+)%', r.text)
+        if not buy or not sell:
+            return None
+        return {
+            "source": "MyFxBook",
+            "buy": int(buy.group(1)),
+            "sell": int(sell.group(1))
+        }
+    except:
+        return None
 
-    if not alerts:
-        return ""
+def get_bank_bias():
+    # konteks institusional sederhana (placeholder)
+    return {
+        "source": "COT / Bank Notes",
+        "bias": "Bullish medium-term, cautious short-term"
+    }
 
-    alert_text = "🚨 EXTREME MARKET ALERT\n"
-    for a in alerts:
-        alert_text += f"- {a}\n"
-    alert_text += "→ Risiko pergerakan ekstrem & false move meningkat\n"
-
-    return alert_text
-
-# =========================
-# GPT ANALYSIS
-# =========================
-def get_analysis(retail, score, label, ai_modes, extreme_alert):
-    if retail:
-        buy, sell = retail
-        retail_text = f"Buy {buy}% vs Sell {sell}%"
-    else:
-        retail_text = "Tidak tersedia (Myfxbook tidak dapat diakses)"
-
-    prompt = f"""
-Kamu adalah analis makro profesional.
-
-{ai_modes}
-
-{extreme_alert}
-
+# ======================================================
+# FASE 1 — AI MODULES
+# ======================================================
+def ai_market_narrative(price, fundamental, retail, bank, session):
+    return ai(f"""
 DATA:
-- Retail Sentiment: {retail_text}
-- Market Score: {score}/100 ({label})
-- COT: Hedge fund masih net long emas (momentum melambat)
+Price: {price}
+Fundamental: {fundamental}
+Retail: {retail}
+Institution: {bank}
+Session: {session}
 
 TUGAS:
-Buat laporan XAUUSD profesional dan kontekstual.
+Jelaskan NARASI market XAUUSD hari ini.
+Fokus pada:
+- Siapa yang dominan
+- Karakter pergerakan
+- Risiko utama
+""")
 
-FORMAT:
-📊 XAUUSD Market Insight ({session})
+def ai_scenario_tree(price, narrative, fundamental):
+    return ai(f"""
+DATA:
+Price: {price}
+Market Narrative: {narrative}
+Fundamental Context: {fundamental}
 
-🧠 Market Mode & Event:
-{ai_modes}
+TUGAS:
+Buat SCENARIO TREE pergerakan XAUUSD.
 
-{extreme_alert}
+FORMAT WAJIB:
+Primary Scenario (dengan %):
+Secondary Scenario (dengan %):
+Tail Risk Scenario (dengan %):
 
-🔹 Fundamental:
-...
+Sebutkan arah & range harga.
+""")
 
-🔹 Retail Sentiment:
-{retail_text}
+def ai_session_behavior(price, narrative, session):
+    return ai(f"""
+DATA:
+Session: {session}
+Price: {price}
+Market Narrative: {narrative}
 
-🔹 COT (Smart Money):
-...
+TUGAS:
+Analisa perilaku harga khas sesi ini
+dan implikasinya ke XAUUSD.
+""")
 
-📊 Market Score:
-{score}/100 — {label}
+# ======================================================
+# REPORT BUILDER
+# ======================================================
+def build_report(narrative, scenario, session_behavior):
+    return f"""
+📊 XAUUSD MARKET INTELLIGENCE — FASE 1
+Session: {session}
 
-🔹 AI Conclusion:
-...
-"""
-    r = client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt
-    )
-    return r.output_text
+🧠 Market Narrative:
+{narrative}
 
-# =========================
+🌳 Scenario Tree:
+{scenario}
+
+🕒 Session Behavior:
+{session_behavior}
+
+⚠️ Catatan:
+Laporan ini bersifat INTELLIGENCE.
+Belum ada sinyal trading atau eksekusi.
+""".strip()
+
+# ======================================================
 # TELEGRAM
-# =========================
+# ======================================================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=20)
+    requests.post(
+        url,
+        json={"chat_id": CHAT_ID, "text": text},
+        timeout=10
+    )
 
-# =========================
+# ======================================================
 # MAIN
-# =========================
+# ======================================================
 if __name__ == "__main__":
+    price = get_price_data()
+    fundamental = get_fundamental_calendar()
     retail = get_retail_sentiment()
-    if retail:
-        buy, sell = retail
-        score, label = calculate_score(buy, sell)
-    else:
-        score, label = 50, "Netral (Data Terbatas)"
+    bank = get_bank_bias()
 
-    ai_modes = get_ai_market_and_event_mode()
-    extreme_alert = get_extreme_alert(retail, score)
-    analysis = get_analysis(retail, score, label, ai_modes, extreme_alert)
-    send_telegram(analysis)
+    narrative = ai_market_narrative(price, fundamental, retail, bank, session)
+    scenario = ai_scenario_tree(price, narrative, fundamental)
+    session_behavior = ai_session_behavior(price, narrative, session)
+
+    report = build_report(narrative, scenario, session_behavior)
+    send_telegram(report)
