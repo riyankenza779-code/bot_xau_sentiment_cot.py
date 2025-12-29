@@ -179,6 +179,50 @@ FORMAT:
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=20)
+def check_manual_command():
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    r = requests.get(url, timeout=10).json()
+
+    if not r.get("ok"):
+        return None
+
+    results = r.get("result", [])
+    if not results:
+        return None
+
+    last = results[-1]
+    text = last.get("message", {}).get("text", "")
+    chat_id = last.get("message", {}).get("chat", {}).get("id")
+
+    if text.strip().lower() == "/xau":
+        return chat_id
+
+    return None
+# =========================
+# MANUAL LOOP (/xau)
+# =========================
+if __name__ == "__main__":
+    last_update_id = 0
+
+    while True:
+        try:
+            manual, last_update_id = check_manual_command(last_update_id)
+
+            if manual:
+                # === GANTI BARIS DI BAWAH INI ===
+                analysis_text = analysis  # <-- pakai variabel analisa yang SUDAH ADA
+                # ===============================
+
+                send_telegram(
+                    "📊 MANUAL XAUUSD UPDATE\n\n" + analysis_text
+                )
+                time.sleep(5)  # anti spam
+
+            time.sleep(10)
+
+        except Exception as e:
+            print("MANUAL LOOP ERROR:", e)
+            time.sleep(10)
 
 # =========================
 # MAIN
