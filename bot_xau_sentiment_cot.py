@@ -1,6 +1,5 @@
 from openai import OpenAI
 import os, requests, time
-from datetime import datetime
 
 # =========================
 # INIT
@@ -10,11 +9,14 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 # =========================
-# GLOBAL STATE (SWITCHABLE)
+# GLOBAL STATE
 # =========================
 ACTIVE_PAIR = "OANDA:XAUUSD"
-ACTIVE_TF = "M5"           # M5 / M15
+ACTIVE_TF = "M5"
 MODE = "SCALPING"
+
+STATUS_ON = True          # 🔔 status on/off
+LAST_STATUS_TIME = 0      # cooldown status
 
 # =========================
 # TELEGRAM
@@ -27,7 +29,7 @@ def send(text, chat_id=CHAT_ID):
     )
 
 # =========================
-# PRICE (OHLC SIMPLIFIED)
+# PRICE
 # =========================
 def get_price(symbol):
     r = requests.post(
@@ -41,54 +43,37 @@ def get_price(symbol):
     return r[0], r[1], r[2], r[3]
 
 # =========================
-# INDICATORS (LIGHT)
+# INDICATORS
 # =========================
 def calc_rsi(close, open_):
     delta = close - open_
-    if delta > 0:
-        return min(75, 50 + abs(delta) * 5)
-    else:
-        return max(25, 50 - abs(delta) * 5)
+    return min(75, max(25, 50 + delta * 5))
 
 def calc_macd(close, open_):
     return round(close - open_, 2)
 
 # =========================
-# RISKI-STYLE SETUP
+# SETUP LOGIC
 # =========================
 def detect_setup(price, open_, high, low, rsi, macd):
     rng = high - low
 
-    # BREAKOUT
     if price > high and rsi > 55 and macd > 0:
-        entry = price
-        sl = entry - rng * 0.8
-        tp = entry + (entry - sl) * 1.8
-        return "LONG", entry, sl, tp, "Momentum Breakout"
+        return "LONG", price, price - rng*0.8, price + rng*1.6, "Breakout"
 
-    # PULLBACK
     if 45 <= rsi <= 55 and macd > 0:
-        entry = price
-        sl = low - rng * 0.5
-        tp = entry + (entry - sl) * 1.5
-        return "LONG", entry, sl, tp, "Pullback Continuation"
+        return "LONG", price, low - rng*0.5, price + rng*1.2, "Pullback"
 
-    # REVERSAL
     if rsi > 70 and macd < 0:
-        entry = price
-        sl = high + rng * 0.5
-        tp = entry - (sl - entry) * 1.5
-        return "SHORT", entry, sl, tp, "Exhaustion Reversal"
+        return "SHORT", price, high + rng*0.5, price - rng*1.2, "Reversal"
 
     return None
 
 # =========================
-# AI CONFIRMATION
+# AI CONFIRM
 # =========================
-def ai_confirm(setup, rsi, macd):
+def ai_confirm(rsi, macd):
     score = 50
-    if setup:
-        score += 10
     if rsi > 55 and macd > 0:
         score += 20
     if 40 <= rsi <= 65:
@@ -114,29 +99,25 @@ def scan(symbol):
 # MAIN LOOP
 # =========================
 def run_bot():
-    global ACTIVE_PAIR, ACTIVE_TF
+    global ACTIVE_PAIR, ACTIVE_TF, STATUS_ON, LAST_STATUS_TIME
 
-    send(
-        f"🤖 SCALPING BOT AKTIF\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}"
-    )
+    send("🤖 SCALPING BOT AKTIF\nGunakan /statusoff jika spam")
 
     last_scan = 0
-    last_update = 0
 
     while True:
         try:
             interval = 300 if ACTIVE_TF == "M5" else 900
             now = time.time()
 
-            # ===== AUTO SCAN =====
+            # ===== AUTO SCAN SIGNAL =====
             if now - last_scan > interval:
                 last_scan = now
-
                 price, rsi, macd, setup = scan(ACTIVE_PAIR)
 
                 if setup:
                     side, entry, sl, tp, reason = setup
-                    prob, conf = ai_confirm(setup, rsi, macd)
+                    prob, conf = ai_confirm(rsi, macd)
 
                     if prob >= 55:
                         send(f"""
@@ -153,11 +134,14 @@ TP: {round(tp,2)}
 🧠 Win Probability: {prob}%
 Confidence: {conf}
 
-📌 Strategy:
-Riski-style {reason}
-
+📌 Setup: {reason}
 ⚠️ Risk max 1%
 """)
+
+            # ===== STATUS HEARTBEAT (ANTI SPAM) =====
+            if STATUS_ON and now - LAST_STATUS_TIME > 1800:
+                LAST_STATUS_TIME = now
+                send(f"📡 Bot aktif | Pair: {ACTIVE_PAIR} | TF: {ACTIVE_TF}")
 
             # ===== TELEGRAM COMMAND =====
             r = requests.get(
@@ -169,7 +153,18 @@ Riski-style {reason}
                 chat_id = u["message"]["chat"]["id"]
                 text = u["message"].get("text","").lower()
 
-                # SWITCH PAIR
+                # STATUS SWITCH
+                if text == "/statusoff":
+                    STATUS_ON = False
+                    send("🔕 Status dimatikan (anti spam)", chat_id)
+                    continue
+
+                if text == "/statuson":
+                    STATUS_ON = True
+                    send("🔔 Status diaktifkan", chat_id)
+                    continue
+
+                # PAIR SWITCH
                 if text == "/xau":
                     ACTIVE_PAIR = "OANDA:XAUUSD"
                     send("✅ Pair diset ke XAUUSD", chat_id)
@@ -180,24 +175,22 @@ Riski-style {reason}
                     send("✅ Pair diset ke BTCUSDT", chat_id)
                     continue
 
-                # SWITCH TF
+                # TF SWITCH
                 if text == "/m5":
                     ACTIVE_TF = "M5"
-                    send("⚡ Timeframe diset ke M5", chat_id)
+                    send("⚡ Timeframe M5 aktif", chat_id)
                     continue
 
                 if text == "/m15":
                     ACTIVE_TF = "M15"
-                    send("📊 Timeframe diset ke M15", chat_id)
+                    send("📊 Timeframe M15 aktif", chat_id)
                     continue
 
-                # STATUS
                 if text == "/status":
                     send(
-                        f"📌 STATUS BOT\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}",
+                        f"📌 STATUS\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}\nStatus Msg: {'ON' if STATUS_ON else 'OFF'}",
                         chat_id
                     )
-                    continue
 
             time.sleep(2)
 
