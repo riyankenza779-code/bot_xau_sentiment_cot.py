@@ -17,7 +17,7 @@ MODE = "SCALPING"
 
 STATUS_ON = True
 LAST_STATUS_TIME = 0
-last_update_id = 0   # 🔥 KUNCI ANTI SPAM
+last_update_id = 0   # anti spam
 
 # =========================
 # TELEGRAM
@@ -103,7 +103,7 @@ def run_bot():
     global ACTIVE_PAIR, ACTIVE_TF
     global STATUS_ON, LAST_STATUS_TIME, last_update_id
 
-    send("🤖 SCALPING BOT AKTIF (ANTI SPAM READY)")
+    send("🤖 SCALPING BOT AKTIF (READY)")
 
     last_scan = 0
 
@@ -112,7 +112,7 @@ def run_bot():
             now = time.time()
             interval = 300 if ACTIVE_TF == "M5" else 900
 
-            # ===== AUTO SIGNAL SCAN =====
+            # ===== AUTO SIGNAL =====
             if now - last_scan > interval:
                 last_scan = now
                 price, rsi, macd, setup = scan(ACTIVE_PAIR)
@@ -140,12 +140,12 @@ Confidence: {conf}
 ⚠️ Risk max 1%
 """)
 
-            # ===== STATUS HEARTBEAT (COOLDOWN) =====
+            # ===== STATUS HEARTBEAT =====
             if STATUS_ON and now - LAST_STATUS_TIME > 1800:
                 LAST_STATUS_TIME = now
                 send(f"📡 Bot aktif | Pair: {ACTIVE_PAIR} | TF: {ACTIVE_TF}")
 
-            # ===== TELEGRAM UPDATE (OFFSET FIX) =====
+            # ===== TELEGRAM UPDATES (OFFSET) =====
             r = requests.get(
                 f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}",
                 timeout=20
@@ -153,7 +153,6 @@ Confidence: {conf}
 
             for u in r.get("result", []):
                 last_update_id = u["update_id"]
-
                 msg = u.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "").lower()
@@ -161,10 +160,25 @@ Confidence: {conf}
                 if not text:
                     continue
 
+                # /START
+                if text == "/start":
+                    send(
+                        "👋 Selamat datang di Scalping Bot\n\n"
+                        "📌 Command:\n"
+                        "/xau → Gold\n"
+                        "/btc → Bitcoin\n"
+                        "/m5 → TF M5\n"
+                        "/m15 → TF M15\n"
+                        "/status → Cek status\n"
+                        "/statusoff → Matikan status",
+                        chat_id
+                    )
+                    continue
+
                 # STATUS SWITCH
                 if text == "/statusoff":
                     STATUS_ON = False
-                    send("🔕 Status dimatikan (anti spam)", chat_id)
+                    send("🔕 Status dimatikan", chat_id)
                     continue
 
                 if text == "/statuson":
