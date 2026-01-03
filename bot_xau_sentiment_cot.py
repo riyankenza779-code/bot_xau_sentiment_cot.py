@@ -9,9 +9,12 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-PAIR = "OANDA:XAUUSD"
-MODE = "SCALPING"      # SCALPING / INTRADAY
-TF = "M5"              # M5 / M15
+# =========================
+# GLOBAL STATE (SWITCHABLE)
+# =========================
+ACTIVE_PAIR = "OANDA:XAUUSD"
+ACTIVE_TF = "M5"           # M5 / M15
+MODE = "SCALPING"
 
 # =========================
 # TELEGRAM
@@ -24,7 +27,7 @@ def send(text, chat_id=CHAT_ID):
     )
 
 # =========================
-# PRICE (SIMPLIFIED OHLC)
+# PRICE (OHLC SIMPLIFIED)
 # =========================
 def get_price(symbol):
     r = requests.post(
@@ -38,14 +41,14 @@ def get_price(symbol):
     return r[0], r[1], r[2], r[3]
 
 # =========================
-# INDICATORS (LIGHTWEIGHT)
+# INDICATORS (LIGHT)
 # =========================
 def calc_rsi(close, open_):
     delta = close - open_
     if delta > 0:
-        return min(70, 50 + abs(delta) * 5)
+        return min(75, 50 + abs(delta) * 5)
     else:
-        return max(30, 50 - abs(delta) * 5)
+        return max(25, 50 - abs(delta) * 5)
 
 def calc_macd(close, open_):
     return round(close - open_, 2)
@@ -54,37 +57,36 @@ def calc_macd(close, open_):
 # RISKI-STYLE SETUP
 # =========================
 def detect_setup(price, open_, high, low, rsi, macd):
-    range_candle = high - low
+    rng = high - low
 
-    # MOMENTUM BREAKOUT
+    # BREAKOUT
     if price > high and rsi > 55 and macd > 0:
         entry = price
-        sl = entry - range_candle * 0.8
+        sl = entry - rng * 0.8
         tp = entry + (entry - sl) * 1.8
         return "LONG", entry, sl, tp, "Momentum Breakout"
 
-    # PULLBACK TREND
-    if rsi > 45 and rsi < 55 and macd > 0:
+    # PULLBACK
+    if 45 <= rsi <= 55 and macd > 0:
         entry = price
-        sl = low - range_candle * 0.5
+        sl = low - rng * 0.5
         tp = entry + (entry - sl) * 1.5
         return "LONG", entry, sl, tp, "Pullback Continuation"
 
-    # REVERSAL EXTREME
+    # REVERSAL
     if rsi > 70 and macd < 0:
         entry = price
-        sl = high + range_candle * 0.5
+        sl = high + rng * 0.5
         tp = entry - (sl - entry) * 1.5
         return "SHORT", entry, sl, tp, "Exhaustion Reversal"
 
     return None
 
 # =========================
-# AI CONFIRMATION (PROBABILITY)
+# AI CONFIRMATION
 # =========================
 def ai_confirm(setup, rsi, macd):
     score = 50
-
     if setup:
         score += 10
     if rsi > 55 and macd > 0:
@@ -95,11 +97,11 @@ def ai_confirm(setup, rsi, macd):
         score += 10
 
     score = min(75, score)
-    confidence = "HIGH" if score >= 65 else "MEDIUM" if score >= 55 else "LOW"
-    return score, confidence
+    conf = "HIGH" if score >= 65 else "MEDIUM" if score >= 55 else "LOW"
+    return score, conf
 
 # =========================
-# SCAN MARKET
+# SCAN
 # =========================
 def scan(symbol):
     price, open_, high, low = get_price(symbol)
@@ -112,19 +114,25 @@ def scan(symbol):
 # MAIN LOOP
 # =========================
 def run_bot():
-    send(f"🤖 XAUUSD SCALPING BOT AKTIF\nMode: {MODE}\nTF: {TF}")
+    global ACTIVE_PAIR, ACTIVE_TF
+
+    send(
+        f"🤖 SCALPING BOT AKTIF\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}"
+    )
 
     last_scan = 0
-    interval = 300 if TF == "M5" else 900
+    last_update = 0
 
     while True:
         try:
+            interval = 300 if ACTIVE_TF == "M5" else 900
             now = time.time()
 
             # ===== AUTO SCAN =====
             if now - last_scan > interval:
                 last_scan = now
-                price, rsi, macd, setup = scan(PAIR)
+
+                price, rsi, macd, setup = scan(ACTIVE_PAIR)
 
                 if setup:
                     side, entry, sl, tp, reason = setup
@@ -132,7 +140,7 @@ def run_bot():
 
                     if prob >= 55:
                         send(f"""
-🎯 XAUUSD SIGNAL ({TF})
+🎯 SIGNAL {ACTIVE_PAIR.replace('OANDA:','').replace('BINANCE:','')} ({ACTIVE_TF})
 
 Direction: {side}
 Entry: {round(entry,2)}
@@ -142,7 +150,7 @@ TP: {round(tp,2)}
 📉 RSI: {round(rsi,1)}
 📊 MACD: {macd}
 
-🧠 AI Win Probability: {prob}%
+🧠 Win Probability: {prob}%
 Confidence: {conf}
 
 📌 Strategy:
@@ -151,7 +159,7 @@ Riski-style {reason}
 ⚠️ Risk max 1%
 """)
 
-            # ===== CHAT =====
+            # ===== TELEGRAM COMMAND =====
             r = requests.get(
                 f"https://api.telegram.org/bot{TOKEN}/getUpdates",
                 timeout=20
@@ -161,15 +169,35 @@ Riski-style {reason}
                 chat_id = u["message"]["chat"]["id"]
                 text = u["message"].get("text","").lower()
 
-                if "gold" in text or "/xau" in text:
-                    price, rsi, macd, _ = scan(PAIR)
-                    send(f"""
-📊 XAUUSD STATUS ({TF})
-Price: {price}
-RSI: {round(rsi,1)}
-MACD: {macd}
-Mode: {MODE}
-""", chat_id)
+                # SWITCH PAIR
+                if text == "/xau":
+                    ACTIVE_PAIR = "OANDA:XAUUSD"
+                    send("✅ Pair diset ke XAUUSD", chat_id)
+                    continue
+
+                if text == "/btc":
+                    ACTIVE_PAIR = "BINANCE:BTCUSDT"
+                    send("✅ Pair diset ke BTCUSDT", chat_id)
+                    continue
+
+                # SWITCH TF
+                if text == "/m5":
+                    ACTIVE_TF = "M5"
+                    send("⚡ Timeframe diset ke M5", chat_id)
+                    continue
+
+                if text == "/m15":
+                    ACTIVE_TF = "M15"
+                    send("📊 Timeframe diset ke M15", chat_id)
+                    continue
+
+                # STATUS
+                if text == "/status":
+                    send(
+                        f"📌 STATUS BOT\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}",
+                        chat_id
+                    )
+                    continue
 
             time.sleep(2)
 
