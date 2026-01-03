@@ -176,7 +176,7 @@ Confidence: {conf}
                     )
                     continue
 
-                # /PREDICT 🔮
+                               # /PREDICT 🔮
                 if text == "/predict":
                     price, rsi, macd, _ = scan(ACTIVE_PAIR)
                     prob, conf = ai_confirm(rsi, macd)
@@ -186,6 +186,27 @@ Confidence: {conf}
                         "BEARISH" if macd < 0 else
                         "NETRAL"
                     )
+
+                    send(
+                        f"""🔮 PREDIKSI {ACTIVE_PAIR.replace('OANDA:','').replace('BINANCE:','')} ({ACTIVE_TF})
+
+Price: {round(price,2)}
+Arah Dominan: {arah}
+
+📉 RSI: {round(rsi,1)}
+📊 MACD: {macd}
+
+🧠 Win Probability: {prob}%
+Confidence: {conf}
+
+📌 Catatan:
+Ini prediksi kondisi SAAT INI,
+bukan sinyal entry.
+""",
+                        chat_id
+                    )
+                    continue
+
 
                     send(
                         f"""🔮 PREDIKSI {ACTIVE_PAIR.replace('OANDA:','').replace('BINANCE:','')} ({ACTIVE_TF})
