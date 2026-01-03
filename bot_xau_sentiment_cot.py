@@ -15,8 +15,9 @@ ACTIVE_PAIR = "OANDA:XAUUSD"
 ACTIVE_TF = "M5"
 MODE = "SCALPING"
 
-STATUS_ON = True          # 🔔 status on/off
-LAST_STATUS_TIME = 0      # cooldown status
+STATUS_ON = True
+LAST_STATUS_TIME = 0
+last_update_id = 0   # 🔥 KUNCI ANTI SPAM
 
 # =========================
 # TELEGRAM
@@ -99,18 +100,19 @@ def scan(symbol):
 # MAIN LOOP
 # =========================
 def run_bot():
-    global ACTIVE_PAIR, ACTIVE_TF, STATUS_ON, LAST_STATUS_TIME
+    global ACTIVE_PAIR, ACTIVE_TF
+    global STATUS_ON, LAST_STATUS_TIME, last_update_id
 
-    send("🤖 SCALPING BOT AKTIF\nGunakan /statusoff jika spam")
+    send("🤖 SCALPING BOT AKTIF (ANTI SPAM READY)")
 
     last_scan = 0
 
     while True:
         try:
-            interval = 300 if ACTIVE_TF == "M5" else 900
             now = time.time()
+            interval = 300 if ACTIVE_TF == "M5" else 900
 
-            # ===== AUTO SCAN SIGNAL =====
+            # ===== AUTO SIGNAL SCAN =====
             if now - last_scan > interval:
                 last_scan = now
                 price, rsi, macd, setup = scan(ACTIVE_PAIR)
@@ -138,20 +140,26 @@ Confidence: {conf}
 ⚠️ Risk max 1%
 """)
 
-            # ===== STATUS HEARTBEAT (ANTI SPAM) =====
+            # ===== STATUS HEARTBEAT (COOLDOWN) =====
             if STATUS_ON and now - LAST_STATUS_TIME > 1800:
                 LAST_STATUS_TIME = now
                 send(f"📡 Bot aktif | Pair: {ACTIVE_PAIR} | TF: {ACTIVE_TF}")
 
-            # ===== TELEGRAM COMMAND =====
+            # ===== TELEGRAM UPDATE (OFFSET FIX) =====
             r = requests.get(
-                f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+                f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}",
                 timeout=20
             ).json()
 
             for u in r.get("result", []):
-                chat_id = u["message"]["chat"]["id"]
-                text = u["message"].get("text","").lower()
+                last_update_id = u["update_id"]
+
+                msg = u.get("message", {})
+                chat_id = msg.get("chat", {}).get("id")
+                text = msg.get("text", "").lower()
+
+                if not text:
+                    continue
 
                 # STATUS SWITCH
                 if text == "/statusoff":
@@ -188,7 +196,7 @@ Confidence: {conf}
 
                 if text == "/status":
                     send(
-                        f"📌 STATUS\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}\nStatus Msg: {'ON' if STATUS_ON else 'OFF'}",
+                        f"📌 STATUS BOT\nPair: {ACTIVE_PAIR}\nTF: {ACTIVE_TF}\nStatus Msg: {'ON' if STATUS_ON else 'OFF'}",
                         chat_id
                     )
 
