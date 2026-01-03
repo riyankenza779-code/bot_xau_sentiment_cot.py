@@ -1,5 +1,5 @@
 from openai import OpenAI
-import os, requests, time, math
+import os, requests, time
 from datetime import datetime
 
 # =========================
@@ -10,7 +10,8 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 PAIR = "OANDA:XAUUSD"
-MODE = "SCALPING"  # SCALPING / INTRADAY
+MODE = "SCALPING"      # SCALPING / INTRADAY
+TF = "M5"              # M5 / M15
 
 # =========================
 # TELEGRAM
@@ -23,9 +24,9 @@ def send(text, chat_id=CHAT_ID):
     )
 
 # =========================
-# PRICE + OHLC 15M
+# PRICE (SIMPLIFIED OHLC)
 # =========================
-def get_ohlc_15m(symbol):
+def get_price(symbol):
     r = requests.post(
         "https://scanner.tradingview.com/symbol",
         json={
@@ -34,102 +35,123 @@ def get_ohlc_15m(symbol):
         },
         timeout=10
     ).json()["data"][0]["d"]
-
     return r[0], r[1], r[2], r[3]
 
 # =========================
-# INDICATORS
+# INDICATORS (LIGHTWEIGHT)
 # =========================
-def rsi(close, prev_close):
-    gain = max(0, close - prev_close)
-    loss = max(0, prev_close - close)
-    if loss == 0:
-        return 70
-    rs = gain / loss
-    return round(100 - (100 / (1 + rs)), 1)
+def calc_rsi(close, open_):
+    delta = close - open_
+    if delta > 0:
+        return min(70, 50 + abs(delta) * 5)
+    else:
+        return max(30, 50 - abs(delta) * 5)
 
-def macd(close, open_):
+def calc_macd(close, open_):
     return round(close - open_, 2)
 
 # =========================
-# ENTRY LOGIC
+# RISKI-STYLE SETUP
 # =========================
-def generate_signal(price, open_, high, low, rsi_v, macd_v):
-    # ---- BREAKOUT ----
-    if price > high and rsi_v > 60 and macd_v > 0:
-        entry = price
-        sl = entry - (high - low)
-        tp = entry + (entry - sl) * 2
-        return "LONG", entry, sl, tp, "Breakout Bullish"
+def detect_setup(price, open_, high, low, rsi, macd):
+    range_candle = high - low
 
-    # ---- REVERSAL ----
-    if rsi_v < 30 and macd_v < 0:
+    # MOMENTUM BREAKOUT
+    if price > high and rsi > 55 and macd > 0:
         entry = price
-        sl = low - (high - low) * 0.3
-        tp = entry + (entry - sl) * 2
-        return "LONG", entry, sl, tp, "Reversal Oversold"
+        sl = entry - range_candle * 0.8
+        tp = entry + (entry - sl) * 1.8
+        return "LONG", entry, sl, tp, "Momentum Breakout"
 
-    if rsi_v > 70 and macd_v < 0:
+    # PULLBACK TREND
+    if rsi > 45 and rsi < 55 and macd > 0:
         entry = price
-        sl = high + (high - low) * 0.3
-        tp = entry - (sl - entry) * 2
-        return "SHORT", entry, sl, tp, "Reversal Overbought"
+        sl = low - range_candle * 0.5
+        tp = entry + (entry - sl) * 1.5
+        return "LONG", entry, sl, tp, "Pullback Continuation"
+
+    # REVERSAL EXTREME
+    if rsi > 70 and macd < 0:
+        entry = price
+        sl = high + range_candle * 0.5
+        tp = entry - (sl - entry) * 1.5
+        return "SHORT", entry, sl, tp, "Exhaustion Reversal"
 
     return None
 
 # =========================
-# AUTONOMOUS SCAN
+# AI CONFIRMATION (PROBABILITY)
 # =========================
-def scan_market(symbol):
-    price, open_, high, low = get_ohlc_15m(symbol)
-    prev_close = open_
-    rsi_v = rsi(price, prev_close)
-    macd_v = macd(price, open_)
+def ai_confirm(setup, rsi, macd):
+    score = 50
 
-    signal = generate_signal(price, open_, high, low, rsi_v, macd_v)
+    if setup:
+        score += 10
+    if rsi > 55 and macd > 0:
+        score += 20
+    if 40 <= rsi <= 65:
+        score += 15
+    if abs(macd) > 0.5:
+        score += 10
 
-    return price, rsi_v, macd_v, signal
+    score = min(75, score)
+    confidence = "HIGH" if score >= 65 else "MEDIUM" if score >= 55 else "LOW"
+    return score, confidence
+
+# =========================
+# SCAN MARKET
+# =========================
+def scan(symbol):
+    price, open_, high, low = get_price(symbol)
+    rsi = calc_rsi(price, open_)
+    macd = calc_macd(price, open_)
+    setup = detect_setup(price, open_, high, low, rsi, macd)
+    return price, rsi, macd, setup
 
 # =========================
 # MAIN LOOP
 # =========================
 def run_bot():
-    send("🤖 XAUUSD SCALPING BOT 15M AKTIF")
+    send(f"🤖 XAUUSD SCALPING BOT AKTIF\nMode: {MODE}\nTF: {TF}")
 
-    last_signal_time = 0
+    last_scan = 0
+    interval = 300 if TF == "M5" else 900
 
     while True:
         try:
             now = time.time()
 
-            # ---- AUTO SCAN SETIAP 15 MENIT ----
-            if now - last_signal_time > 900:
-                last_signal_time = now
+            # ===== AUTO SCAN =====
+            if now - last_scan > interval:
+                last_scan = now
+                price, rsi, macd, setup = scan(PAIR)
 
-                price, rsi_v, macd_v, signal = scan_market(PAIR)
+                if setup:
+                    side, entry, sl, tp, reason = setup
+                    prob, conf = ai_confirm(setup, rsi, macd)
 
-                if signal:
-                    side, entry, sl, tp, reason = signal
-
-                    msg = f"""
-🎯 XAUUSD SIGNAL ({MODE} 15M)
+                    if prob >= 55:
+                        send(f"""
+🎯 XAUUSD SIGNAL ({TF})
 
 Direction: {side}
 Entry: {round(entry,2)}
-Stop Loss: {round(sl,2)}
-Take Profit: {round(tp,2)}
+SL: {round(sl,2)}
+TP: {round(tp,2)}
 
-📉 RSI: {rsi_v}
-📊 MACD: {macd_v}
+📉 RSI: {round(rsi,1)}
+📊 MACD: {macd}
 
-📌 Setup:
-{reason}
+🧠 AI Win Probability: {prob}%
+Confidence: {conf}
 
-⚠️ Risk max 1–2%
-"""
-                    send(msg)
+📌 Strategy:
+Riski-style {reason}
 
-            # ---- TELEGRAM CHAT ----
+⚠️ Risk max 1%
+""")
+
+            # ===== CHAT =====
             r = requests.get(
                 f"https://api.telegram.org/bot{TOKEN}/getUpdates",
                 timeout=20
@@ -137,23 +159,17 @@ Take Profit: {round(tp,2)}
 
             for u in r.get("result", []):
                 chat_id = u["message"]["chat"]["id"]
-                text = u["message"].get("text", "").lower()
+                text = u["message"].get("text","").lower()
 
-                if "/xau" in text or "gold" in text:
-                    price, rsi_v, macd_v, _ = scan_market(PAIR)
-                    send(
-                        f"""📊 XAUUSD STATUS (15M)
+                if "gold" in text or "/xau" in text:
+                    price, rsi, macd, _ = scan(PAIR)
+                    send(f"""
+📊 XAUUSD STATUS ({TF})
 Price: {price}
-RSI: {rsi_v}
-MACD: {macd_v}
+RSI: {round(rsi,1)}
+MACD: {macd}
 Mode: {MODE}
-""",
-                        chat_id
-                    )
-
-                if text == "/btc":
-                    price, _, _, _ = scan_market("BINANCE:BTCUSDT")
-                    send(f"₿ BTCUSDT Price: {price}", chat_id)
+""", chat_id)
 
             time.sleep(2)
 
