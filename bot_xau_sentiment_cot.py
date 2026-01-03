@@ -169,8 +169,40 @@ Confidence: {conf}
                         "/btc → Bitcoin\n"
                         "/m5 → TF M5\n"
                         "/m15 → TF M15\n"
+                        "/predict → Prediksi & probabilitas\n"
                         "/status → Cek status\n"
                         "/statusoff → Matikan status",
+                        chat_id
+                    )
+                    continue
+
+                # /PREDICT 🔮
+                if text == "/predict":
+                    price, rsi, macd, _ = scan(ACTIVE_PAIR)
+                    prob, conf = ai_confirm(rsi, macd)
+
+                    arah = (
+                        "BULLISH" if macd > 0 else
+                        "BEARISH" if macd < 0 else
+                        "NETRAL"
+                    )
+
+                    send(
+                        f"""🔮 PREDIKSI {ACTIVE_PAIR.replace('OANDA:','').replace('BINANCE:','')} ({ACTIVE_TF})
+
+Price: {round(price,2)}
+Arah Dominan: {arah}
+
+📉 RSI: {round(rsi,1)}
+📊 MACD: {macd}
+
+🧠 Win Probability: {prob}%
+Confidence: {conf}
+
+📌 Catatan:
+Ini prediksi kondisi SAAT INI,
+bukan sinyal entry.
+""",
                         chat_id
                     )
                     continue
